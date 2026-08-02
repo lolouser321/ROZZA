@@ -35,6 +35,7 @@ final class ROZZAAudioSession {
             do {
                 try session.setActive(true, options: [])
                 active = true
+                SilentAudioPlayer.shared.play()
                 print("[ROZZA AudioSession] OK setActive(true)")
             } catch {
                 logFailure(api: "setActive(true, options: [])", error: error)
@@ -74,5 +75,59 @@ final class ROZZAAudioSession {
         print("[ROZZA AudioSession] NSError code / OSStatus:", nsError.code)
         print("[ROZZA AudioSession] NSError description:", nsError.localizedDescription)
         print("[ROZZA AudioSession] NSError userInfo:", nsError.userInfo)
+    }
+}
+
+final class SilentAudioPlayer {
+    static let shared = SilentAudioPlayer()
+    private var audioPlayer: AVAudioPlayer?
+
+    private init() {
+        let sampleRate: Int32 = 44100
+        let numChannels: Int16 = 1
+        let bitsPerSample: Int16 = 16
+        let numSamples = sampleRate
+        let dataSize = Int32(numSamples * Int32(numChannels) * Int32(bitsPerSample / 8))
+        let fileSize = 36 + dataSize
+
+        var header = Data()
+        header.append(contentsOf: [0x52, 0x49, 0x46, 0x46])
+        header.append(contentsOf: withUnsafeBytes(of: fileSize.littleEndian) { Array($0) })
+        header.append(contentsOf: [0x57, 0x41, 0x56, 0x45])
+        header.append(contentsOf: [0x66, 0x6D, 0x74, 0x20])
+        let fmtChunkSize: Int32 = 16
+        header.append(contentsOf: withUnsafeBytes(of: fmtChunkSize.littleEndian) { Array($0) })
+        let audioFormat: Int16 = 1
+        header.append(contentsOf: withUnsafeBytes(of: audioFormat.littleEndian) { Array($0) })
+        header.append(contentsOf: withUnsafeBytes(of: numChannels.littleEndian) { Array($0) })
+        header.append(contentsOf: withUnsafeBytes(of: sampleRate.littleEndian) { Array($0) })
+        let byteRate = sampleRate * Int32(numChannels) * Int32(bitsPerSample / 8)
+        header.append(contentsOf: withUnsafeBytes(of: byteRate.littleEndian) { Array($0) })
+        let blockAlign = numChannels * (bitsPerSample / 8)
+        header.append(contentsOf: withUnsafeBytes(of: blockAlign.littleEndian) { Array($0) })
+        header.append(contentsOf: withUnsafeBytes(of: bitsPerSample.littleEndian) { Array($0) })
+        header.append(contentsOf: [0x64, 0x61, 0x74, 0x61])
+        header.append(contentsOf: withUnsafeBytes(of: dataSize.littleEndian) { Array($0) })
+
+        let pcmData = Data(count: Int(dataSize))
+        var wavData = header
+        wavData.append(pcmData)
+
+        do {
+            audioPlayer = try AVAudioPlayer(data: wavData)
+            audioPlayer?.numberOfLoops = -1
+            audioPlayer?.volume = 0.001
+            audioPlayer?.prepareToPlay()
+        } catch {
+            print("[ROZZA SilentAudio] Failed to initialize silent audio player:", error)
+        }
+    }
+
+    func play() {
+        audioPlayer?.play()
+    }
+
+    func pause() {
+        audioPlayer?.pause()
     }
 }

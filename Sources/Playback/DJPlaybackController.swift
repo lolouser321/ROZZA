@@ -231,6 +231,12 @@ final class DJPlaybackController: NSObject, ObservableObject {
         observers.append(center.addObserver(forName: AVAudioSession.silenceSecondaryAudioHintNotification, object: nil, queue: .main) { [weak self] note in
             Task { @MainActor in self?.handleSilenceHint(note) }
         })
+        observers.append(center.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor in
+                try? ROZZAAudioSession.shared.configureAndActivateIfNeeded()
+                self?.evaluateYouTube("if(window.YT && window.YT.wantPlay) { window.YT.play(); }")
+            }
+        })
     }
 
     private func handleInterruption(_ notification: Notification) {
