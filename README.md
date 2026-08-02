@@ -23,3 +23,5 @@ npm run dev
 ```
 
 Provider credentials stay on the backend. Never add them to the iOS app or Git. See `backend/.env.example` for the complete configuration and `README-CI.md` for simulator and signed-device builds.
+
+The app icon is the ROZZA neon `R` waveform mark in `Resources/Assets.xcassets/AppIcon.appiconset`. GitHub Actions publishes both a simulator artifact and an unsigned hardware IPA; the unsigned IPA still requires re-signing before installation on iOS.
