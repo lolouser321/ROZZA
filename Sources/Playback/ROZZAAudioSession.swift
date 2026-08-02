@@ -17,13 +17,16 @@ final class ROZZAAudioSession {
         let session = AVAudioSession.sharedInstance()
 
         if !configured {
-            print("[ROZZA AudioSession] CALL setCategory(category: playback, mode: default, options: [] / rawValue: 0)")
+            print("[ROZZA AudioSession] CALL setCategory(category: playback, mode: default, options: [])")
             do {
-                try session.setCategory(.playback, mode: .default, options: [.allowBluetooth, .allowBluetoothA2DP, .allowAirPlay])
+                // The playback category already supports Bluetooth A2DP and
+                // AirPlay routing. Passing record-oriented Bluetooth options
+                // here can produce an incompatible-category OSStatus error.
+                try session.setCategory(.playback, mode: .default, options: [])
                 configured = true
-                print("[ROZZA AudioSession] OK setCategory (.playback with bluetooth/airplay)")
+                print("[ROZZA AudioSession] OK setCategory (.playback)")
             } catch {
-                logFailure(api: "setCategory(.playback, mode: .default, options: [.allowBluetooth, .allowBluetoothA2DP, .allowAirPlay])", error: error)
+                logFailure(api: "setCategory(.playback, mode: .default, options: [])", error: error)
                 throw error
             }
         } else {

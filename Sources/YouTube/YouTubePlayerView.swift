@@ -12,6 +12,8 @@ struct YouTubePlayerView: UIViewRepresentable {
         config.allowsAirPlayForMediaPlayback = true
         config.allowsPictureInPictureMediaPlayback = true
         config.mediaTypesRequiringUserActionForPlayback = []
+        config.defaultWebpagePreferences.allowsContentJavaScript = true
+        YouTubeMessengerBridge.install(in: config, handler: context.coordinator)
         let view = WKWebView(frame: .zero, configuration: config)
         view.isOpaque = false; view.backgroundColor = .black; view.scrollView.isScrollEnabled = false
         context.coordinator.webView = view; provider.bridge = context.coordinator
@@ -23,7 +25,14 @@ struct YouTubePlayerView: UIViewRepresentable {
         guard let videoID else { view.loadHTMLString("<body style='background:#000'></body>", baseURL: URL(string: "https://www.youtube.com")); return }
         context.coordinator.load(videoID: videoID)
     }
-    final class Coordinator: NSObject, YouTubePlayerBridge {
+
+    static func dismantleUIView(_ view: WKWebView, coordinator: Coordinator) {
+        view.configuration.userContentController.removeScriptMessageHandler(
+            forName: YouTubeMessengerBridge.handlerName
+        )
+    }
+
+    final class Coordinator: NSObject, YouTubePlayerBridge, WKScriptMessageHandler {
         weak var webView: WKWebView?; weak var provider: YouTubeEmbeddedProvider?; var videoID: String?
         init(provider: YouTubeEmbeddedProvider) { self.provider = provider }
         func load(videoID: String) {
@@ -42,6 +51,19 @@ struct YouTubePlayerView: UIViewRepresentable {
         }
         func play() { evaluate("play()") }; func pause() { evaluate("pause()") }; func seek(to seconds: TimeInterval) { evaluate("seek(\(seconds))") }; func stop() { evaluate("stop()") }
         private func evaluate(_ js: String) { webView?.evaluateJavaScript(js) }
+
+        func userContentController(
+            _ userContentController: WKUserContentController,
+            didReceive message: WKScriptMessage
+        ) {
+            guard message.name == YouTubeMessengerBridge.handlerName,
+                  let payload = message.body as? [String: Any],
+                  let event = payload["event"] as? String else { return }
+
+            if event == "VideoPlay" ||
+                (event == "VideoIsPlaying" && (payload["paused"] as? Bool) == false) {
+                try? ROZZAAudioSession.shared.configureAndActivateIfNeeded()
+            }
+        }
     }
 }
-

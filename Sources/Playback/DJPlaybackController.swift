@@ -52,6 +52,36 @@ final class DJPlaybackController: NSObject, ObservableObject {
         refreshDebugState()
     }
 
+    /// Receives play-state callbacks from the bundled YouTube frame messenger.
+    /// These events keep native audio state and Lock Screen playback state in
+    /// sync even when WebKit's normal page callbacks are throttled.
+    func handleYouTubeMessengerEvent(_ payload: [String: Any]) {
+        guard let event = payload["event"] as? String else { return }
+
+        switch event {
+        case "VideoPlay":
+            _ = configureAudioSession()
+            isYouTubePlaying = true
+            updateNativePlaybackState(isPlaying: true, payload: payload)
+        case "VideoPause":
+            isYouTubePlaying = false
+            updateNativePlaybackState(isPlaying: false, payload: payload)
+        case "VideoIsPlaying":
+            let isPlaying = (payload["paused"] as? Bool) == false
+            if isPlaying { _ = configureAudioSession() }
+            if isYouTubePlaying != isPlaying {
+                isYouTubePlaying = isPlaying
+                updateNativePlaybackState(isPlaying: isPlaying, payload: payload)
+            }
+        case "YouTubeFullscreen":
+            if let state = payload["state"] as? String {
+                print("[ROZZA YouTube messenger] fullscreen:", state)
+            }
+        default:
+            print("[ROZZA YouTube messenger] event:", event)
+        }
+    }
+
     func setYouTubeDeckVolume(_ value: Float) {
         youtubeDeckVolume = clamp(value)
         applyCrossfader()
@@ -289,6 +319,15 @@ final class DJPlaybackController: NSObject, ObservableObject {
             nowPlayingInfo[MPNowPlayingInfoPropertyPlaybackRate] = isPlaying ? 1.0 : 0.0
         }
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nowPlayingInfo
+    }
+
+    private func updateNativePlaybackState(isPlaying: Bool, payload: [String: Any]) {
+        var info = MPNowPlayingInfoCenter.default().nowPlayingInfo ?? [:]
+        info[MPNowPlayingInfoPropertyPlaybackRate] = isPlaying ? 1.0 : 0.0
+        if let elapsed = (payload["currentTime"] as? NSNumber)?.doubleValue {
+            info[MPNowPlayingInfoPropertyElapsedPlaybackTime] = elapsed
+        }
+        MPNowPlayingInfoCenter.default().nowPlayingInfo = info
     }
 
     private func configureRemoteCommands() {

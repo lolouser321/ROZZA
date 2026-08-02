@@ -8,7 +8,8 @@ on:
 jobs:
   build-unsigned-ipa:
     name: Build unsigned device IPA
-    runs-on: macos-26
+    runs-on: macos-15
+    timeout-minutes: 35
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -18,35 +19,18 @@ jobs:
           xcodebuild -version
           xcrun --sdk iphoneos --show-sdk-version
           brew install xcodegen
-          xcodegen generate
 
-      - name: Build unsigned iPhone application
+      - name: Verify resources, build app, and package IPA
         run: |
-          set -o pipefail
-          xcodebuild -project ROZZA.xcodeproj -scheme ROZZA \
-            -sdk iphoneos \
-            -configuration Release \
-            -derivedDataPath DerivedData \
-            CODE_SIGNING_ALLOWED=NO \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGN_IDENTITY='' \
-            build
-
-      - name: Package unsigned IPA
-        run: |
-          APP_PATH=$(find DerivedData/Build/Products/Release-iphoneos -maxdepth 1 -name '*.app' | head -n 1)
-          test -n "$APP_PATH"
-          test -f "$APP_PATH/Info.plist"
-          test -d "$APP_PATH/Assets.car" || test -f "$APP_PATH/Assets.car"
-          mkdir -p Payload
-          ditto "$APP_PATH" "Payload/ROZZA.app"
-          ditto -c -k --sequesterRsrc --keepParent Payload ROZZA-Unsigned.ipa
-          ls -lh ROZZA-Unsigned.ipa
+          chmod +x Scripts/verify-ios-resources.sh Scripts/build-unsigned-ipa.sh
+          Scripts/build-unsigned-ipa.sh
+          unzip -l build/ROZZA-Unsigned.ipa | grep -E 'Payload/ROZZA.app/(Assets.car|rozza2.html|yt_video_play_messenger.js)'
+          ls -lh build/ROZZA-Unsigned.ipa
 
       - name: Upload unsigned IPA
         uses: actions/upload-artifact@v4
         with:
           name: ROZZA-Unsigned-IPA
-          path: ROZZA-Unsigned.ipa
+          path: build/ROZZA-Unsigned.ipa
           retention-days: 30
 

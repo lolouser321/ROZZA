@@ -13,6 +13,8 @@ jobs:
         run: |
           xcodebuild -version
           brew install xcodegen
+          chmod +x Scripts/verify-ios-resources.sh
+          Scripts/verify-ios-resources.sh
           xcodegen generate
 
       - name: Build for Simulator

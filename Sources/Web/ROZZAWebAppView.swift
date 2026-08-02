@@ -19,6 +19,7 @@ struct ROZZAWebAppView: UIViewRepresentable {
         configuration.defaultWebpagePreferences.allowsContentJavaScript = true
         configuration.userContentController.add(context.coordinator, name: "audioSession")
         configuration.userContentController.add(context.coordinator, name: "nowPlaying")
+        YouTubeMessengerBridge.install(in: configuration, handler: context.coordinator)
 
         let webView = WKWebView(frame: .zero, configuration: configuration)
         webView.navigationDelegate = context.coordinator
@@ -51,6 +52,9 @@ struct ROZZAWebAppView: UIViewRepresentable {
                 if action == "activate" { activateAudioSession() }
             } else if message.name == "nowPlaying", let dict = message.body as? [String: Any] {
                 dj?.updateNowPlaying(info: dict)
+            } else if message.name == YouTubeMessengerBridge.handlerName,
+                      let payload = message.body as? [String: Any] {
+                dj?.handleYouTubeMessengerEvent(payload)
             }
         }
 
