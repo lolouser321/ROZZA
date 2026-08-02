@@ -2,11 +2,16 @@ import SwiftUI
 
 @main
 struct ROZZAApp: App {
+    @StateObject private var dj = DJPlaybackController()
+
     var body: some Scene {
         WindowGroup {
-            ROZZAWebAppView()
-                .ignoresSafeArea()
-                .preferredColorScheme(.dark)
+            ZStack(alignment: .topTrailing) {
+                ROZZAWebAppView(dj: dj)
+                    .ignoresSafeArea()
+                DJLauncherButton(controller: dj)
+            }
+            .preferredColorScheme(.dark)
         }
     }
 }

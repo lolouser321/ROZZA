@@ -4,7 +4,8 @@ import WebKit
 import AVFoundation
 
 struct ROZZAWebAppView: UIViewRepresentable {
-    func makeCoordinator() -> Coordinator { Coordinator() }
+    @ObservedObject var dj: DJPlaybackController
+    func makeCoordinator() -> Coordinator { Coordinator(dj: dj) }
 
     func makeUIView(context: Context) -> WKWebView {
         let configuration = WKWebViewConfiguration()
@@ -27,6 +28,7 @@ struct ROZZAWebAppView: UIViewRepresentable {
         webView.backgroundColor = .black
         webView.scrollView.backgroundColor = .black
         context.coordinator.loadApp(in: webView)
+        dj.attach(webView: webView)
         return webView
     }
 
@@ -38,6 +40,10 @@ struct ROZZAWebAppView: UIViewRepresentable {
     }
 
     final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler {
+        private weak var dj: DJPlaybackController?
+
+        init(dj: DJPlaybackController) { self.dj = dj }
+
         func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
             guard message.name == "audioSession", let action = message.body as? String else { return }
             if action == "activate" { activateAudioSession() }

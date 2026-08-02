@@ -944,7 +944,7 @@ const Audio = (() => {
 
 /* ---------------- YOUTUBE (postMessage; fresh in-gesture iframe) ---------------- */
 const YT = (() => {
-  let iframe=null, ready=false, healthy=false, state=-1, time=0, dur=0, vol=80;
+  let iframe=null, ready=false, healthy=false, state=-1, time=0, dur=0, vol=80, reportedVol=80;
   let wantPlay=false, currentId=null, loadStartedAt=0, msgAttached=false;
   let pollT=null, failT=null;
   const YT_RE = /(^|\.)youtube(-nocookie)?\.com$/;
@@ -961,6 +961,7 @@ const YT = (() => {
       const inf = d.info || {};
       if(typeof inf.currentTime==='number') time = inf.currentTime;
       if(typeof inf.duration==='number' && inf.duration>0) dur = inf.duration;
+      if(typeof inf.volume==='number') reportedVol = inf.volume;
       if(typeof inf.playerState==='number'){ const ps=inf.playerState; if(ps!==state){ state=ps; Coordinator.onYTState(ps); } }
       if(d.event==='initialDelivery'){
         ready = true;
@@ -980,7 +981,7 @@ const YT = (() => {
   }
   function post(o){ try{ if(iframe && iframe.contentWindow) iframe.contentWindow.postMessage(JSON.stringify(o), 'https://www.youtube-nocookie.com'); }catch(_){} }
   function cmd(f,a){ post({event:'command', func:f, args:a||[], id:'rozza', channel:'widget'}); }
-  function poll(){ stopPoll(); pollT=setInterval(()=>{ if(!ready) return; cmd('getCurrentTime',[]); cmd('getDuration',[]); cmd('getPlayerState',[]); },700); }
+  function poll(){ stopPoll(); pollT=setInterval(()=>{ if(!ready) return; cmd('getCurrentTime',[]); cmd('getDuration',[]); cmd('getPlayerState',[]); cmd('getVolume',[]); },700); }
   function stopPoll(){ if(pollT){ clearInterval(pollT); pollT=null; } }
   function buildIframe(id, autoplay){
     const host = hostEl(); if(!host) return;
@@ -996,6 +997,7 @@ const YT = (() => {
   }
   return {
     get state(){ return state; }, get time(){ return time; }, get dur(){ return dur; },
+    get ready(){ return ready; }, get requestedVol(){ return vol; }, get reportedVol(){ return reportedVol; },
     get healthy(){ return healthy; }, get mounted(){ return !!iframe; },
     get playing(){ return state===1 || state===3; }, get loadAge(){ return Date.now()-loadStartedAt; },
     load(id, autoplay=true){
@@ -1009,10 +1011,29 @@ const YT = (() => {
     play(){ wantPlay=true; if(ready) cmd('playVideo',[]); else if(currentId) buildIframe(currentId, true); },
     pause(){ wantPlay=false; if(ready) cmd('pauseVideo',[]); },
     seek(t){ cmd('seekTo',[t,true]); },
-    setVol(v){ vol = Math.round(clamp(v,0,1)*100); cmd('setVolume',[vol]); },
+    setVol(v){ vol = Math.round(clamp(v,0,1)*100); if(vol===0) cmd('mute',[]); else { cmd('unMute',[]); cmd('setVolume',[vol]); } },
     unload(){ ready=false; healthy=false; state=-1; wantPlay=false; currentId=null; stopPoll(); clearTimeout(failT); const host=hostEl(); if(host) host.innerHTML=''; iframe=null; }
   };
 })();
+
+// Native DJ-test bridge. It controls the same visible compliant YouTube iframe
+// used by ROZZA and deliberately exposes no media URL.
+window.rozzaDJ = {
+  isReady: () => YT.ready,
+  play: () => { YT.play(); return YT.ready; },
+  pause: () => { YT.pause(); return YT.ready; },
+  setVolume: value => {
+    const percent = Math.max(0, Math.min(100, Number(value) || 0));
+    YT.setVol(percent / 100);
+    return YT.ready;
+  },
+  status: () => ({
+    ready: YT.ready,
+    requestedVolume: YT.requestedVol,
+    reportedVolume: YT.reportedVol,
+    playing: YT.playing
+  })
+};
 
 /* ---------------- COORDINATOR ---------------- */
 const Coordinator = {
