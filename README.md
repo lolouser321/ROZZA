@@ -1,6 +1,6 @@
 # ROZZA
 
-ROZZA is the native SwiftUI iOS music app and its TypeScript service backend. This repository contains the complete current ROZZA UI, global playback manager, search, library, AI and recognition integrations—not an HTML shell.
+ROZZA is an iOS music app built from the checked-in `rozza2.html` experience and hosted by a small native SwiftUI/WKWebView shell. The bundled interface is the source of truth for layout and playback behavior.
 
 ## iOS app
 
@@ -11,7 +11,7 @@ xcodegen generate
 open ROZZA.xcodeproj
 ```
 
-Local builds default to `http://127.0.0.1:3001`. Set the GitHub repository variable `ROZZA_API_BASE_URL` to the deployed HTTPS backend URL before making a device build. YouTube content uses a visible official embedded player and remains foreground-only. Local and authorized native audio uses AVPlayer and supports background audio, Lock Screen, Control Center, Bluetooth, and AirPlay.
+The shipped interface does not connect to localhost or require the TypeScript backend. It performs Piped/Invidious mirror discovery and uses the visible official YouTube embedded player defined in `rozza2.html`. Direct audio and imported local files use its HTML audio player. YouTube remains subject to embedded-player foreground restrictions.
 
 ## Backend
 
@@ -22,6 +22,6 @@ cp .env.example .env
 npm run dev
 ```
 
-Provider credentials stay on the backend. Never add them to the iOS app or Git. See `backend/.env.example` for the complete configuration and `README-CI.md` for simulator and signed-device builds.
+The optional backend remains for later native/API integrations, but it is not required by this build. Never add provider credentials to the iOS app or Git. See `README-CI.md` for simulator and device builds.
 
 The app icon is the ROZZA neon `R` waveform mark in `Resources/Assets.xcassets/AppIcon.appiconset`. GitHub Actions publishes both a simulator artifact and an unsigned hardware IPA; the unsigned IPA still requires re-signing before installation on iOS.
