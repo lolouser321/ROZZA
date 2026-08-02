@@ -1,0 +1,9 @@
+{
+  "name": "ROZZA — Pull Sound From Anywhere",
+  "short_name": "ROZZA",
+  "description": "A browser-based audio deck for links, streams, and local files.",
+  "start_url": "/player.html",
+  "display": "standalone",
+  "background_color": "#1c0c12",
+  "theme_color": "#1c0c12"
+}
