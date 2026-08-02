@@ -1,0 +1,50 @@
+name: ROZZA
+
+options:
+  bundleIdPrefix: com.rozza
+  deploymentTarget:
+    iOS: "15.0"
+  xcodeVersion: "16.0"
+  createIntermediateGroups: true
+
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    IPHONEOS_DEPLOYMENT_TARGET: "15.0"
+    CLANG_ENABLE_MODULES: YES
+    ENABLE_BITCODE: NO
+
+targets:
+  ROZZA:
+    type: application
+    platform: iOS
+    sources:
+      - path: Sources
+    resources:
+      - path: Resources
+    info:
+      path: Config/Info.plist
+    entitlements:
+      path: Config/ROZZA.entitlements
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.rozza.player
+        PRODUCT_NAME: ROZZA
+        TARGETED_DEVICE_FAMILY: "1,2"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        CODE_SIGN_STYLE: Automatic
+        GENERATE_INFOPLIST_FILE: NO
+        INFOPLIST_FILE: Config/Info.plist
+    scheme:
+      gatherCoverageData: false
+      testTargets: []
+
+schemes:
+  ROZZA:
+    build:
+      targets:
+        ROZZA: all
+    run:
+      config: Debug
+    archive:
+      config: Release
