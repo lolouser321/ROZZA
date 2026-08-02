@@ -1,6 +1,7 @@
 import AVFoundation
 import Combine
 import Foundation
+import MediaPlayer
 import WebKit
 
 @MainActor
@@ -33,6 +34,7 @@ final class DJPlaybackController: NSObject, ObservableObject {
         super.init()
         configureAudioSession()
         observeAudioEvents()
+        configureRemoteCommands()
         applyCrossfader()
         statusTimer = Timer.scheduledTimer(withTimeInterval: 0.6, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.refreshDebugState() }
@@ -262,4 +264,88 @@ final class DJPlaybackController: NSObject, ObservableObject {
     }
 
     private func clamp(_ value: Float) -> Float { min(1, max(0, value)) }
+
+    func updateNowPlaying(info: [String: Any]) {
+        var nowPlayingInfo = [String: Any]()
+        if let title = info["title"] as? String {
+            nowPlayingInfo[MPMediaItemPropertyTitle] = title
+        }
+        if let artist = info["artist"] as? String {
+            nowPlayingInfo[MPMediaItemPropertyArtist] = artist
+        }
+        if let duration = info["duration"] as? Double, duration > 0 {
+            nowPlayingInfo[MPMediaItemPropertyPlaybackDuration] = duration
+        }
+        if let elapsed = info["elapsed"] as? Double {
+            nowPlayingInfo[MPNowPlayingInfoPropertyElapsedPlaybackTime] = elapsed
+        }
+        if let isPlaying = info["isPlaying"] as? Bool {
+            nowPlayingInfo[MPNowPlayingInfoPropertyPlaybackRate] = isPlaying ? 1.0 : 0.0
+        }
+        MPNowPlayingInfoCenter.default().nowPlayingInfo = nowPlayingInfo
+    }
+
+    private func configureRemoteCommands() {
+        let center = MPRemoteCommandCenter.shared()
+
+        center.playCommand.isEnabled = true
+        center.playCommand.addTarget { [weak self] _ in
+            Task { @MainActor in
+                self?.configureAudioSession()
+                self?.evaluateYouTube("if(window.Coordinator && typeof window.Coordinator.toggle === 'function') { window.Coordinator.toggle(); } else if(window.player && typeof window.player.playVideo === 'function') { window.player.playVideo(); }")
+                if self?.avPlayer.currentItem != nil { self?.playAVPlayer() }
+            }
+            return .success
+        }
+
+        center.pauseCommand.isEnabled = true
+        center.pauseCommand.addTarget { [weak self] _ in
+            Task { @MainActor in
+                self?.evaluateYouTube("if(window.Coordinator && typeof window.Coordinator.toggle === 'function') { window.Coordinator.toggle(); } else if(window.player && typeof window.player.pauseVideo === 'function') { window.player.pauseVideo(); }")
+                self?.pauseAVPlayer(reason: "Lockscreen pause")
+            }
+            return .success
+        }
+
+        center.togglePlayPauseCommand.isEnabled = true
+        center.togglePlayPauseCommand.addTarget { [weak self] _ in
+            Task { @MainActor in
+                self?.configureAudioSession()
+                self?.evaluateYouTube("if(window.Coordinator && typeof window.Coordinator.toggle === 'function') { window.Coordinator.toggle(); }")
+                if let isPlaying = self?.isAVPlayerPlaying, isPlaying {
+                    self?.pauseAVPlayer(reason: "Lockscreen toggle")
+                } else if self?.avPlayer.currentItem != nil {
+                    self?.playAVPlayer()
+                }
+            }
+            return .success
+        }
+
+        center.nextTrackCommand.isEnabled = true
+        center.nextTrackCommand.addTarget { [weak self] _ in
+            Task { @MainActor in
+                self?.evaluateYouTube("if(window.Coordinator && typeof window.Coordinator.next === 'function') window.Coordinator.next(false);")
+            }
+            return .success
+        }
+
+        center.previousTrackCommand.isEnabled = true
+        center.previousTrackCommand.addTarget { [weak self] _ in
+            Task { @MainActor in
+                self?.evaluateYouTube("if(window.Coordinator && typeof window.Coordinator.prev === 'function') window.Coordinator.prev();")
+            }
+            return .success
+        }
+
+        center.changePlaybackPositionCommand.isEnabled = true
+        center.changePlaybackPositionCommand.addTarget { [weak self] event in
+            guard let posEvent = event as? MPChangePlaybackPositionCommandEvent else { return .commandFailed }
+            let seconds = posEvent.positionTime
+            Task { @MainActor in
+                self?.evaluateYouTube("if(window.Coordinator && typeof window.Coordinator.seek === 'function') window.Coordinator.seek(\(seconds));")
+                await self?.avPlayer.seek(to: CMTime(seconds: seconds, preferredTimescale: 600))
+            }
+            return .success
+        }
+    }
 }

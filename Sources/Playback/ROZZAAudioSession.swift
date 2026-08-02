@@ -19,11 +19,11 @@ final class ROZZAAudioSession {
         if !configured {
             print("[ROZZA AudioSession] CALL setCategory(category: playback, mode: default, options: [] / rawValue: 0)")
             do {
-                try session.setCategory(.playback, mode: .default, options: [])
+                try session.setCategory(.playback, mode: .default, options: [.allowBluetooth, .allowBluetoothA2DP, .allowAirPlay])
                 configured = true
-                print("[ROZZA AudioSession] OK setCategory")
+                print("[ROZZA AudioSession] OK setCategory (.playback with bluetooth/airplay)")
             } catch {
-                logFailure(api: "setCategory(.playback, mode: .default, options: [])", error: error)
+                logFailure(api: "setCategory(.playback, mode: .default, options: [.allowBluetooth, .allowBluetoothA2DP, .allowAirPlay])", error: error)
                 throw error
             }
         } else {

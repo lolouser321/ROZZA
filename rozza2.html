@@ -914,6 +914,21 @@ function activateNativeAudioSession(){
 function deactivateNativeAudioSession(){
   try{ window.webkit?.messageHandlers?.audioSession?.postMessage('deactivate'); }catch(_){}
 }
+function postNowPlayingToNative(){
+  if(!current) return;
+  const isPlaying = (current.source==='youtube') ? YT.playing : Audio.playing;
+  const elapsed = (current.source==='youtube') ? YT.time : Audio.time;
+  const duration = (current.source==='youtube') ? YT.dur : Audio.dur;
+  try {
+    window.webkit?.messageHandlers?.nowPlaying?.postMessage({
+      title: current.title || 'ROZZA',
+      artist: current.artist || 'ROZZA',
+      duration: duration || 0,
+      elapsed: elapsed || 0,
+      isPlaying: isPlaying
+    });
+  } catch(_) {}
+}
 const Audio = (() => {
   const el = new window.Audio();
   el.playsInline = true; el.preload = 'metadata';
@@ -1070,6 +1085,7 @@ const Coordinator = {
     clearTimeout(this._autoT); clearTimeout(this._ytT);
     if(it.source==='youtube'){
       Audio.stop();
+      activateNativeAudioSession();
       YT.load(it.videoId || it.id, autoplay);
       if(autoplay){
         this._ytT = setTimeout(()=>{
@@ -1131,6 +1147,7 @@ const Coordinator = {
     }, 1200);
   }
 };
+window.Coordinator = Coordinator;
 function setNeedsTap(on){ const b=$('#npPlayBtn'); if(b) b.classList.toggle('needs-tap', !!on); }
 
 function mediaSession(){
@@ -1242,6 +1259,7 @@ const UI = {
     $('#mbPlay').innerHTML=playing?pauseIcon:playIcon;
     const np=$('#npPlayBtn'); if(np) np.innerHTML=playing?pauseIcon:playIcon;
     if('mediaSession' in navigator){ try{ navigator.mediaSession.playbackState=playing?'playing':'paused'; }catch(e){} }
+    postNowPlayingToNative();
     buildTicker();
   },
   onTime(t,d){
@@ -1252,6 +1270,7 @@ const UI = {
     if(fill){ const pct=d>0?clamp(t/d*100,0,100):0; fill.style.width=pct+'%'; if(knob) knob.style.left=pct+'%'; }
     if(ct) ct.textContent=fmtTime(t); if(dt) dt.textContent=fmtTime(d);
     if('mediaSession' in navigator && d>0){ try{ navigator.mediaSession.setPositionState({ duration:d, playbackRate:1, position:clamp(t,0,d) }); }catch(e){} }
+    postNowPlayingToNative();
   }
 };
 function sourceLabel(s){ return s==='youtube'?'YouTube':s==='direct'?'Direct audio':'Local file'; }

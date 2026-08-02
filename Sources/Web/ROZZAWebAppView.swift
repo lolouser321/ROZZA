@@ -18,6 +18,7 @@ struct ROZZAWebAppView: UIViewRepresentable {
         configuration.mediaTypesRequiringUserActionForPlayback = []
         configuration.defaultWebpagePreferences.allowsContentJavaScript = true
         configuration.userContentController.add(context.coordinator, name: "audioSession")
+        configuration.userContentController.add(context.coordinator, name: "nowPlaying")
 
         let webView = WKWebView(frame: .zero, configuration: configuration)
         webView.navigationDelegate = context.coordinator
@@ -46,8 +47,11 @@ struct ROZZAWebAppView: UIViewRepresentable {
         init(dj: DJPlaybackController) { self.dj = dj }
 
         func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
-            guard message.name == "audioSession", let action = message.body as? String else { return }
-            if action == "activate" { activateAudioSession() }
+            if message.name == "audioSession", let action = message.body as? String {
+                if action == "activate" { activateAudioSession() }
+            } else if message.name == "nowPlaying", let dict = message.body as? [String: Any] {
+                dj?.updateNowPlaying(info: dict)
+            }
         }
 
         private func activateAudioSession() {

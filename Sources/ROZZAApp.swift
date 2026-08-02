@@ -12,6 +12,9 @@ struct ROZZAApp: App {
                 DJLauncherButton(controller: dj)
             }
             .preferredColorScheme(.dark)
+            .onAppear {
+                try? ROZZAAudioSession.shared.configureAndActivateIfNeeded()
+            }
         }
     }
 }

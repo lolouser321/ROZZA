@@ -6,9 +6,12 @@ struct YouTubePlayerView: UIViewRepresentable {
     let provider: YouTubeEmbeddedProvider
     func makeCoordinator() -> Coordinator { Coordinator(provider: provider) }
     func makeUIView(context: Context) -> WKWebView {
+        try? ROZZAAudioSession.shared.configureAndActivateIfNeeded()
         let config = WKWebViewConfiguration()
         config.allowsInlineMediaPlayback = true
-        config.mediaTypesRequiringUserActionForPlayback = [.audio, .video]
+        config.allowsAirPlayForMediaPlayback = true
+        config.allowsPictureInPictureMediaPlayback = true
+        config.mediaTypesRequiringUserActionForPlayback = []
         let view = WKWebView(frame: .zero, configuration: config)
         view.isOpaque = false; view.backgroundColor = .black; view.scrollView.isScrollEnabled = false
         context.coordinator.webView = view; provider.bridge = context.coordinator
