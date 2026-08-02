@@ -908,6 +908,12 @@ function prevIndex(){
 }
 
 /* ---------------- AUDIO (direct + local) ---------------- */
+function activateNativeAudioSession(){
+  try{ window.webkit?.messageHandlers?.audioSession?.postMessage('activate'); }catch(_){}
+}
+function deactivateNativeAudioSession(){
+  try{ window.webkit?.messageHandlers?.audioSession?.postMessage('deactivate'); }catch(_){}
+}
 const Audio = (() => {
   const el = new window.Audio();
   el.playsInline = true; el.preload = 'metadata';
@@ -925,7 +931,7 @@ const Audio = (() => {
   return {
     el,
     load(url){ el.src = url; },
-    play(){ return el.play(); },
+    play(){ activateNativeAudioSession(); return el.play(); },
     pause(){ el.pause(); },
     seek(t){ try{ el.currentTime = t; }catch(e){} },
     vol(v){ el.volume = clamp(v,0,1); },

@@ -1,6 +1,7 @@
 import SwiftUI
 import UIKit
 import WebKit
+import AVFoundation
 
 struct ROZZAWebAppView: UIViewRepresentable {
     func makeCoordinator() -> Coordinator { Coordinator() }
@@ -10,8 +11,10 @@ struct ROZZAWebAppView: UIViewRepresentable {
         configuration.websiteDataStore = .default()
         configuration.allowsInlineMediaPlayback = true
         configuration.allowsAirPlayForMediaPlayback = true
+        configuration.allowsPictureInPictureMediaPlayback = true
         configuration.mediaTypesRequiringUserActionForPlayback = []
         configuration.defaultWebpagePreferences.allowsContentJavaScript = true
+        configuration.userContentController.add(context.coordinator, name: "audioSession")
 
         let webView = WKWebView(frame: .zero, configuration: configuration)
         webView.navigationDelegate = context.coordinator
@@ -29,7 +32,32 @@ struct ROZZAWebAppView: UIViewRepresentable {
 
     func updateUIView(_ webView: WKWebView, context: Context) {}
 
-    final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate {
+    static func dismantleUIView(_ webView: WKWebView, coordinator: Coordinator) {
+        webView.configuration.userContentController.removeScriptMessageHandler(forName: "audioSession")
+        coordinator.deactivateAudioSession()
+    }
+
+    final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler {
+        func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+            guard message.name == "audioSession", let action = message.body as? String else { return }
+            if action == "activate" { activateAudioSession() }
+            if action == "deactivate" { deactivateAudioSession() }
+        }
+
+        private func activateAudioSession() {
+            do {
+                let session = AVAudioSession.sharedInstance()
+                try session.setCategory(.playback, mode: .default, options: [.allowAirPlay, .allowBluetoothA2DP])
+                try session.setActive(true)
+            } catch {
+                assertionFailure("Unable to activate ROZZA playback audio session: \(error)")
+            }
+        }
+
+        fileprivate func deactivateAudioSession() {
+            try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        }
+
         func loadApp(in webView: WKWebView) {
             guard let url = Bundle.main.url(forResource: "rozza2", withExtension: "html"),
                   let html = try? String(contentsOf: url, encoding: .utf8) else {
