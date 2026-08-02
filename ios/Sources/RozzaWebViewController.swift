@@ -299,7 +299,7 @@ final class RozzaWebViewController: UIViewController {
         case "VideoPause":
             lastKnownPlayingState = false
         case "YouTubeFullscreen":
-            setNeedsStatusBarUpdate()
+            setNeedsStatusBarAppearanceUpdate()
         default:
             break
         }
