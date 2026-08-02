@@ -64,24 +64,20 @@ final class DJPlaybackController: NSObject, ObservableObject {
         applyCrossfader()
     }
 
-    func toggleYouTube() {
-        evaluateYouTube(youtubePlaying ? "window.rozzaDJ?.pause()" : "window.rozzaDJ?.play()")
-        youtubePlaying.toggle()
-    }
+    func playYouTube() { evaluateYouTube("window.player?.playVideo(); true") }
+    func pauseYouTube() { evaluateYouTube("window.player?.pauseVideo(); true") }
 
-    func toggleAVPlayer() {
+    func playAVPlayer() {
         guard avPlayer.currentItem != nil else {
             lastError = "Import an MP3/M4A or load a direct audio URL for Deck B first."
             return
         }
         configureAudioSession()
-        if avPlayer.timeControlStatus == .playing {
-            avPlayer.pause()
-        } else {
-            avPlayer.play()
-        }
-        avPlaying = avPlayer.timeControlStatus == .playing
+        avPlayer.play()
+        avPlaying = true
     }
+
+    func pauseAVPlayer() { avPlayer.pause(); avPlaying = false }
 
     func loadDirectURL(_ text: String) {
         guard let url = URL(string: text.trimmingCharacters(in: .whitespacesAndNewlines)),
@@ -133,7 +129,15 @@ final class DJPlaybackController: NSObject, ObservableObject {
         let percent = Int((normalized * 100).rounded())
         print("DJ YouTube requested volume:", percent, "ready:", youtubeReady)
         guard youtubeReady else { return }
-        evaluateYouTube("window.rozzaDJ?.setVolume(\(percent))") { result, error in
+        let script = """
+        (() => {
+          if (!window.player || typeof window.player.setVolume !== 'function') return false;
+          window.player.setVolume(\(percent));
+          if (\(percent) > 0) window.player.unMute();
+          return { applied: true, reported: window.player.getVolume() };
+        })()
+        """
+        evaluateYouTube(script) { result, error in
             print("DJ YouTube applied volume:", percent,
                   "result:", result ?? "nil",
                   "error:", error?.localizedDescription ?? "none")

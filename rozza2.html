@@ -1011,10 +1011,26 @@ const YT = (() => {
     play(){ wantPlay=true; if(ready) cmd('playVideo',[]); else if(currentId) buildIframe(currentId, true); },
     pause(){ wantPlay=false; if(ready) cmd('pauseVideo',[]); },
     seek(t){ cmd('seekTo',[t,true]); },
-    setVol(v){ vol = Math.round(clamp(v,0,1)*100); if(vol===0) cmd('mute',[]); else { cmd('unMute',[]); cmd('setVolume',[vol]); } },
+    setVol(v){
+      vol = Math.round(clamp(v,0,1)*100);
+      console.log('[ROZZA DJ] YouTube requested volume:',vol,'ready:',ready);
+      if(!ready) return;
+      if(vol===0) cmd('mute',[]); else { cmd('unMute',[]); cmd('setVolume',[vol]); }
+      console.log('[ROZZA DJ] YouTube setVolume applied:',vol);
+    },
     unload(){ ready=false; healthy=false; state=-1; wantPlay=false; currentId=null; stopPoll(); clearTimeout(failT); const host=hostEl(); if(host) host.innerHTML=''; iframe=null; }
   };
 })();
+
+// IFrame Player API facade. Swift calls player.setVolume/getVolume on this
+// persistent page; the underlying commands stay inside the official embed.
+window.player = {
+  playVideo: () => YT.play(),
+  pauseVideo: () => YT.pause(),
+  setVolume: value => YT.setVol((Number(value)||0)/100),
+  getVolume: () => YT.reportedVol,
+  unMute: () => { if(YT.requestedVol>0) YT.setVol(YT.requestedVol/100); }
+};
 
 // Native DJ-test bridge. It controls the same visible compliant YouTube iframe
 // used by ROZZA and deliberately exposes no media URL.
@@ -1024,7 +1040,7 @@ window.rozzaDJ = {
   pause: () => { YT.pause(); return YT.ready; },
   setVolume: value => {
     const percent = Math.max(0, Math.min(100, Number(value) || 0));
-    YT.setVol(percent / 100);
+    window.player.setVolume(percent);
     return YT.ready;
   },
   status: () => ({

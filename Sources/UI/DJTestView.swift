@@ -32,14 +32,16 @@ struct DJTestView: View {
                         subtitle: controller.youtubeReady ? "Player ready" : "Open and start a YouTube track in ROZZA first",
                         playing: controller.youtubePlaying,
                         volume: Binding(get: { controller.youtubeDeckVolume }, set: controller.setYouTubeDeckVolume),
-                        toggle: controller.toggleYouTube
+                        play: controller.playYouTube,
+                        pause: controller.pauseYouTube
                     )
                     deck(
                         title: "Deck B · AVPlayer",
                         subtitle: controller.deckBName,
                         playing: controller.avPlaying,
                         volume: Binding(get: { controller.avDeckVolume }, set: controller.setAVDeckVolume),
-                        toggle: controller.toggleAVPlayer
+                        play: controller.playAVPlayer,
+                        pause: controller.pauseAVPlayer
                     )
 
                     HStack {
@@ -74,12 +76,13 @@ struct DJTestView: View {
         }
     }
 
-    private func deck(title: String, subtitle: String, playing: Bool, volume: Binding<Float>, toggle: @escaping () -> Void) -> some View {
+    private func deck(title: String, subtitle: String, playing: Bool, volume: Binding<Float>, play: @escaping () -> Void, pause: @escaping () -> Void) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
                 VStack(alignment: .leading) { Text(title).font(.headline); Text(subtitle).font(.caption).foregroundStyle(.secondary).lineLimit(1) }
                 Spacer()
-                Button(action: toggle) { Image(systemName: playing ? "pause.fill" : "play.fill").frame(width: 42, height: 42).background(.orange, in: Circle()).foregroundStyle(.black) }
+                Button(action: play) { Label("Play", systemImage: "play.fill") }.buttonStyle(.borderedProminent).tint(.orange)
+                Button(action: pause) { Label("Pause", systemImage: "pause.fill") }.buttonStyle(.bordered)
             }
             HStack { Image(systemName: "speaker.slash.fill"); Slider(value: volume, in: 0...1).tint(.orange); Image(systemName: "speaker.wave.3.fill"); Text("\(Int(volume.wrappedValue * 100))").monospacedDigit().frame(width: 32) }
         }
