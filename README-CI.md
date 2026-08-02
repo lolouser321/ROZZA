@@ -1,0 +1,20 @@
+# ROZZA iOS builds on GitHub
+
+The simulator workflow builds and tests every push to `main`, then publishes `ROZZA-Simulator.app.zip`. That artifact only runs in an iOS Simulator.
+
+The signed workflow creates `ROZZA-iPhone-Signed.ipa` for a physical iPhone. Apple requires a matching certificate and provisioning profile; GitHub Actions cannot bypass that platform requirement.
+
+## Required GitHub Actions secrets
+
+- `IOS_P12_BASE64`: base64-encoded Apple signing certificate (`.p12`)
+- `IOS_P12_PASSWORD`: password used to export that certificate
+- `IOS_PROFILE_BASE64`: base64-encoded matching `.mobileprovision`
+- `IOS_KEYCHAIN_PASSWORD`: random password used only for the temporary CI keychain
+- `IOS_TEAM_ID`: Apple Developer Team ID
+- `IOS_BUNDLE_ID`: bundle identifier contained in the provisioning profile
+
+No signing material or provider credentials belong in Git. Backend credentials are deployed as server environment variables listed in `backend/.env.example`.
+
+Set the repository variable `ROZZA_API_BASE_URL` to the public HTTPS backend endpoint. It is configuration, not a provider secret. A device cannot reach the default simulator-only `127.0.0.1` backend.
+
+Without Apple Developer signing assets, use the simulator artifact. A physical-device IPA cannot be produced or installed through this workflow until those assets exist.

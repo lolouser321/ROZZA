@@ -1,0 +1,56 @@
+name: Simulator Build and Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build-simulator:
+    runs-on: macos-15
+    env:
+      ROZZA_API_BASE_URL: ${{ vars.ROZZA_API_BASE_URL }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Toolchain
+        run: |
+          xcodebuild -version
+          brew install xcodegen
+          xcodegen generate
+
+      - name: Build for Simulator
+        run: |
+          set -o pipefail
+          xcodebuild -project ROZZA.xcodeproj -scheme ROZZA \
+            -configuration Debug \
+            -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath DerivedData \
+            CODE_SIGNING_ALLOWED=NO \
+            ROZZA_API_BASE_URL="${ROZZA_API_BASE_URL:-http://127.0.0.1:3001}" build
+
+      - name: Run Tests
+        run: |
+          set -o pipefail
+          UDID=$(xcrun simctl list devices available -j | python3 -c 'import json,sys; d=json.load(sys.stdin)["devices"]; print(next(x["udid"] for values in d.values() for x in values if x["isAvailable"] and x["name"].startswith("iPhone")))')
+          xcrun simctl boot "$UDID" || true
+          xcrun simctl bootstatus "$UDID" -b
+          xcodebuild -project ROZZA.xcodeproj -scheme ROZZA \
+            -configuration Debug \
+            -destination "platform=iOS Simulator,id=$UDID" \
+            -derivedDataPath DerivedData \
+            CODE_SIGNING_ALLOWED=NO \
+            ROZZA_API_BASE_URL="${ROZZA_API_BASE_URL:-http://127.0.0.1:3001}" test
+
+      - name: Package Simulator App
+        run: |
+          APP_PATH=$(find DerivedData/Build/Products/Debug-iphonesimulator -maxdepth 1 -name '*.app' | head -n 1)
+          test -n "$APP_PATH"
+          ditto -c -k --keepParent "$APP_PATH" ROZZA-Simulator.app.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ROZZA-Simulator.app.zip
+          path: ROZZA-Simulator.app.zip
+          retention-days: 14
