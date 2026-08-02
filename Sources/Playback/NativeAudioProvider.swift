@@ -10,12 +10,14 @@ class NativeAudioProvider: PlaybackProvider {
 
     func load(_ track: Track) async throws {
         guard let url = track.playbackURL else { throw ROZZAError.unsupportedPlayback }
-        let session = AVAudioSession.sharedInstance()
-        try session.setCategory(.playback, mode: .default, options: [.allowAirPlay, .allowBluetoothA2DP])
-        try session.setActive(true)
+        try ROZZAAudioSession.shared.configureAndActivateIfNeeded()
         player.replaceCurrentItem(with: AVPlayerItem(url: url))
     }
-    func play() async throws { player.play() }
+    func play() async throws {
+        try ROZZAAudioSession.shared.configureAndActivateIfNeeded()
+        player.play()
+        print("[ROZZA AVPlayer] play() called; rate:", player.rate, "volume:", player.volume)
+    }
     func pause() { player.pause() }
     func seek(to seconds: TimeInterval) async { await player.seek(to: CMTime(seconds: seconds, preferredTimescale: 600)) }
     func stop() { player.pause(); player.replaceCurrentItem(with: nil) }

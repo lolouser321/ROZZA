@@ -1,7 +1,6 @@
 import SwiftUI
 import UIKit
 import WebKit
-import AVFoundation
 
 struct ROZZAWebAppView: UIViewRepresentable {
     @ObservedObject var dj: DJPlaybackController
@@ -36,7 +35,6 @@ struct ROZZAWebAppView: UIViewRepresentable {
 
     static func dismantleUIView(_ webView: WKWebView, coordinator: Coordinator) {
         webView.configuration.userContentController.removeScriptMessageHandler(forName: "audioSession")
-        coordinator.deactivateAudioSession()
     }
 
     final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler {
@@ -47,21 +45,15 @@ struct ROZZAWebAppView: UIViewRepresentable {
         func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
             guard message.name == "audioSession", let action = message.body as? String else { return }
             if action == "activate" { activateAudioSession() }
-            if action == "deactivate" { deactivateAudioSession() }
         }
 
         private func activateAudioSession() {
             do {
-                let session = AVAudioSession.sharedInstance()
-                try session.setCategory(.playback, mode: .default, options: [.allowAirPlay, .allowBluetoothA2DP])
-                try session.setActive(true)
+                try ROZZAAudioSession.shared.configureAndActivateIfNeeded()
             } catch {
-                assertionFailure("Unable to activate ROZZA playback audio session: \(error)")
+                let nsError = error as NSError
+                print("[ROZZA WebView] audioSession activation failed domain=\(nsError.domain) OSStatus=\(nsError.code) error=\(nsError)")
             }
-        }
-
-        fileprivate func deactivateAudioSession() {
-            try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
         }
 
         func loadApp(in webView: WKWebView) {

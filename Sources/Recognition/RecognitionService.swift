@@ -15,7 +15,10 @@ final class RecognitionViewModel: NSObject, ObservableObject {
         let granted = await withCheckedContinuation { continuation in AVAudioSession.sharedInstance().requestRecordPermission { continuation.resume(returning: $0) } }
         guard granted else { state = .failed; errorMessage = "Microphone access is required for Listen."; return }
         do {
-            let session = AVAudioSession.sharedInstance(); try session.setCategory(.record, mode: .measurement); try session.setActive(true)
+            // Recognition must never reconfigure or deactivate the shared
+            // playback session. The recorder either starts under the existing
+            // session or fails cleanly without disrupting active decks.
+            try ROZZAAudioSession.shared.configureAndActivateIfNeeded()
             let url = FileManager.default.temporaryDirectory.appending(path: "rozza-listen-\(UUID().uuidString).m4a")
             recorder = try AVAudioRecorder(url: url, settings: [AVFormatIDKey: Int(kAudioFormatMPEG4AAC), AVSampleRateKey: 44_100, AVNumberOfChannelsKey: 1, AVEncoderAudioQualityKey: AVAudioQuality.high.rawValue]); recorder?.record(); state = .listening
             try await Task.sleep(for: .seconds(8)); guard state == .listening else { return }; recorder?.stop(); state = .processing
@@ -26,9 +29,8 @@ final class RecognitionViewModel: NSObject, ObservableObject {
             let native = dto.previewUrl.flatMap(URL.init(string:))
             result = Track(id: "recognized-\(UUID().uuidString)", title: dto.title ?? "Unknown", artist: dto.artist ?? "Unknown", artworkURL: dto.artwork.flatMap(URL.init(string:)), duration: 0, source: native == nil ? .youtube : .licensed, kind: native == nil ? .video : .song, playbackURL: native, videoID: native == nil ? dto.youtubeVideoId : nil, capabilities: native == nil ? .youtube : .nativeStream); state = .found
         } catch { state = .failed; errorMessage = error.localizedDescription }
-        try? AVAudioSession.sharedInstance().setActive(false)
     }
-    func cancel() { recorder?.stop(); recorder = nil; state = .idle; try? AVAudioSession.sharedInstance().setActive(false) }
+    func cancel() { recorder?.stop(); recorder = nil; state = .idle }
 }
 
 struct ListenRecognitionView: View {

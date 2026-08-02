@@ -72,9 +72,12 @@ final class DJPlaybackController: NSObject, ObservableObject {
             lastError = "Import an MP3/M4A or load a direct audio URL for Deck B first."
             return
         }
-        configureAudioSession()
+        guard configureAudioSession() else { return }
         avPlayer.play()
         avPlaying = true
+        print("[ROZZA DJ AVPlayer] play() called immediately after activation; rate:", avPlayer.rate,
+              "timeControlStatus:", avPlayer.timeControlStatus.rawValue,
+              "volume:", avPlayer.volume)
     }
 
     func pauseAVPlayer() { avPlayer.pause(); avPlaying = false }
@@ -107,7 +110,7 @@ final class DJPlaybackController: NSObject, ObservableObject {
     }
 
     private func loadDeckB(url: URL, name: String) {
-        configureAudioSession()
+        guard configureAudioSession() else { return }
         avPlayer.replaceCurrentItem(with: AVPlayerItem(url: url))
         deckBName = name
         lastError = nil
@@ -187,15 +190,18 @@ final class DJPlaybackController: NSObject, ObservableObject {
         }
     }
 
-    private func configureAudioSession() {
+    @discardableResult
+    private func configureAudioSession() -> Bool {
         do {
+            try ROZZAAudioSession.shared.configureAndActivateIfNeeded()
             let session = AVAudioSession.sharedInstance()
-            try session.setCategory(.playback, mode: .default, options: [.allowAirPlay, .allowBluetoothA2DP])
-            try session.setActive(true)
             outputRoute = session.currentRoute.outputs.map(\.portName).joined(separator: ", ")
             systemOutputVolume = session.outputVolume
+            return true
         } catch {
-            lastError = "Audio session error: \(error.localizedDescription)"
+            let nsError = error as NSError
+            lastError = "Audio session failed (OSStatus \(nsError.code)): \(nsError.localizedDescription)"
+            return false
         }
     }
 
@@ -216,11 +222,13 @@ final class DJPlaybackController: NSObject, ObservableObject {
         guard let rawType = notification.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
               let type = AVAudioSession.InterruptionType(rawValue: rawType) else { return }
         if type == .began {
+            ROZZAAudioSession.shared.markInterrupted()
             resumeAVAfterInterruption = avPlayer.timeControlStatus == .playing
             avPlayer.pause()
             evaluateYouTube("window.rozzaDJ?.pause()")
         } else {
-            configureAudioSession()
+            do { try ROZZAAudioSession.shared.reactivateAfterInterruption() }
+            catch { lastError = "Audio session reactivation failed: \(error.localizedDescription)" }
             let rawOptions = notification.userInfo?[AVAudioSessionInterruptionOptionKey] as? UInt ?? 0
             if AVAudioSession.InterruptionOptions(rawValue: rawOptions).contains(.shouldResume), resumeAVAfterInterruption {
                 avPlayer.play()
