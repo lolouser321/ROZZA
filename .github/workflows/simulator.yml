@@ -9,8 +9,6 @@ on:
 jobs:
   build-simulator:
     runs-on: macos-15
-    env:
-      ROZZA_API_BASE_URL: ${{ vars.ROZZA_API_BASE_URL }}
     steps:
       - uses: actions/checkout@v4
 
@@ -27,8 +25,7 @@ jobs:
             -configuration Debug \
             -destination 'generic/platform=iOS Simulator' \
             -derivedDataPath DerivedData \
-            CODE_SIGNING_ALLOWED=NO \
-            ROZZA_API_BASE_URL="${ROZZA_API_BASE_URL:-http://127.0.0.1:3001}" build
+            CODE_SIGNING_ALLOWED=NO build
 
       - name: Run Tests
         run: |
@@ -40,8 +37,7 @@ jobs:
             -configuration Debug \
             -destination "platform=iOS Simulator,id=$UDID" \
             -derivedDataPath DerivedData \
-            CODE_SIGNING_ALLOWED=NO \
-            ROZZA_API_BASE_URL="${ROZZA_API_BASE_URL:-http://127.0.0.1:3001}" test
+            CODE_SIGNING_ALLOWED=NO test
 
       - name: Package Simulator App
         run: |

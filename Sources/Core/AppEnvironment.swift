@@ -4,10 +4,10 @@ struct AppConfiguration: Sendable {
     let apiBaseURL: URL
     static func live(bundle: Bundle = .main) -> AppConfiguration {
         let raw = (bundle.object(forInfoDictionaryKey: "ROZZA_API_BASE_URL") as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        // Local-only fallback. Release CI injects ROZZA_API_BASE_URL from a
-        // GitHub repository variable; provider credentials remain server-side.
-        let fallback = URL(string: "http://127.0.0.1:3001")!
-        return .init(apiBaseURL: URL(string: raw).flatMap { $0.scheme == nil ? nil : $0 } ?? fallback)
+        guard let url = URL(string: raw), url.scheme == "https" else {
+            preconditionFailure("ROZZA_API_BASE_URL must be configured with an HTTPS URL")
+        }
+        return .init(apiBaseURL: url)
     }
 }
 

@@ -15,8 +15,6 @@ The signed workflow creates `ROZZA-iPhone-Signed.ipa` for a physical iPhone. App
 - `IOS_TEAM_ID`: Apple Developer Team ID
 - `IOS_BUNDLE_ID`: bundle identifier contained in the provisioning profile
 
-No signing material or provider credentials belong in Git. Backend credentials are deployed as server environment variables listed in `backend/.env.example`.
-
-Set the repository variable `ROZZA_API_BASE_URL` to the public HTTPS backend endpoint. It is configuration, not a provider secret. A device cannot reach the default simulator-only `127.0.0.1` backend.
+No signing material or provider credentials belong in Git. The bundled `rozza2.html` interface does not use a localhost backend. Optional backend credentials are deployed as server environment variables listed in `backend/.env.example`.
 
 Without Apple Developer signing assets, use the simulator artifact or download the unsigned IPA for re-signing. An unsigned IPA cannot be installed directly on stock iOS.
