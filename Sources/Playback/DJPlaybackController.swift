@@ -7,11 +7,11 @@ import WebKit
 final class DJPlaybackController: NSObject, ObservableObject {
     @Published var isPresented = false
     @Published var youtubeReady = false
-    @Published var youtubePlaying = false
+    @Published var isYouTubePlaying = false
     @Published var youtubeDeckVolume: Float = 1
     @Published var youtubeRequestedVolume: Float = 0.707
     @Published var youtubeReportedVolume: Float = 0
-    @Published var avPlaying = false
+    @Published var isAVPlayerPlaying = false
     @Published var avDeckVolume: Float = 1
     @Published var avRequestedVolume: Float = 0.707
     @Published var avActualVolume: Float = 0
@@ -22,7 +22,7 @@ final class DJPlaybackController: NSObject, ObservableObject {
     @Published var lastError: String?
 
     let avPlayer = AVPlayer()
-    private weak var webView: WKWebView?
+    private(set) var persistentWebView: WKWebView?
     private var latestYouTubeVolume: Float = 0.707
     private var wasYouTubeReady = false
     private var resumeAVAfterInterruption = false
@@ -45,7 +45,8 @@ final class DJPlaybackController: NSObject, ObservableObject {
     }
 
     func attach(webView: WKWebView) {
-        self.webView = webView
+        guard persistentWebView == nil else { return }
+        persistentWebView = webView
         refreshDebugState()
     }
 
@@ -64,23 +65,35 @@ final class DJPlaybackController: NSObject, ObservableObject {
         applyCrossfader()
     }
 
-    func playYouTube() { evaluateYouTube("window.player?.playVideo(); true") }
-    func pauseYouTube() { evaluateYouTube("window.player?.pauseVideo(); true") }
+    func playYouTube() {
+        evaluateYouTube("""
+        if (window.player && typeof window.player.playVideo === 'function') {
+            window.player.playVideo();
+        }
+        """)
+    }
+
+    func pauseYouTube(reason: String = "Deck A Pause button") {
+        print("YouTube pause requested by:", reason)
+        evaluateYouTube("""
+        if (window.player && typeof window.player.pauseVideo === 'function') {
+            window.player.pauseVideo();
+        }
+        """)
+    }
 
     func playAVPlayer() {
         guard avPlayer.currentItem != nil else {
             lastError = "Import an MP3/M4A or load a direct audio URL for Deck B first."
             return
         }
-        guard configureAudioSession() else { return }
         avPlayer.play()
-        avPlaying = true
-        print("[ROZZA DJ AVPlayer] play() called immediately after activation; rate:", avPlayer.rate,
-              "timeControlStatus:", avPlayer.timeControlStatus.rawValue,
-              "volume:", avPlayer.volume)
     }
 
-    func pauseAVPlayer() { avPlayer.pause(); avPlaying = false }
+    func pauseAVPlayer(reason: String = "Deck B Pause button") {
+        print("AVPlayer pause requested by:", reason)
+        avPlayer.pause()
+    }
 
     func loadDirectURL(_ text: String) {
         guard let url = URL(string: text.trimmingCharacters(in: .whitespacesAndNewlines)),
@@ -160,7 +173,7 @@ final class DJPlaybackController: NSObject, ObservableObject {
         _ script: String,
         completion: ((Any?, Error?) -> Void)? = nil
     ) {
-        guard let webView else {
+        guard let webView = persistentWebView else {
             completion?(nil, NSError(domain: "ROZZA.DJ", code: 1, userInfo: [NSLocalizedDescriptionKey: "WebView unavailable"]))
             return
         }
@@ -174,12 +187,12 @@ final class DJPlaybackController: NSObject, ObservableObject {
         outputRoute = session.currentRoute.outputs.map { "\($0.portName) (\($0.portType.rawValue))" }.joined(separator: ", ")
         systemOutputVolume = session.outputVolume
         avActualVolume = avPlayer.volume
-        avPlaying = avPlayer.timeControlStatus == .playing
+        isAVPlayerPlaying = avPlayer.timeControlStatus == .playing
         evaluateYouTube("window.rozzaDJ?.status()") { [weak self] result, _ in
             guard let self, let status = result as? [String: Any] else { return }
             let ready = status["ready"] as? Bool ?? false
             self.youtubeReady = ready
-            self.youtubePlaying = status["playing"] as? Bool ?? false
+            self.isYouTubePlaying = status["playing"] as? Bool ?? false
             if let volume = status["reportedVolume"] as? NSNumber {
                 self.youtubeReportedVolume = volume.floatValue / 100
             }
@@ -224,8 +237,8 @@ final class DJPlaybackController: NSObject, ObservableObject {
         if type == .began {
             ROZZAAudioSession.shared.markInterrupted()
             resumeAVAfterInterruption = avPlayer.timeControlStatus == .playing
-            avPlayer.pause()
-            evaluateYouTube("window.rozzaDJ?.pause()")
+            pauseAVPlayer(reason: "iOS audio interruption began")
+            pauseYouTube(reason: "iOS audio interruption began")
         } else {
             do { try ROZZAAudioSession.shared.reactivateAfterInterruption() }
             catch { lastError = "Audio session reactivation failed: \(error.localizedDescription)" }

@@ -30,18 +30,18 @@ struct DJTestView: View {
                     deck(
                         title: "Deck A · YouTube",
                         subtitle: controller.youtubeReady ? "Player ready" : "Open and start a YouTube track in ROZZA first",
-                        playing: controller.youtubePlaying,
+                        playing: controller.isYouTubePlaying,
                         volume: Binding(get: { controller.youtubeDeckVolume }, set: controller.setYouTubeDeckVolume),
                         play: controller.playYouTube,
-                        pause: controller.pauseYouTube
+                        pause: { controller.pauseYouTube() }
                     )
                     deck(
                         title: "Deck B · AVPlayer",
                         subtitle: controller.deckBName,
-                        playing: controller.avPlaying,
+                        playing: controller.isAVPlayerPlaying,
                         volume: Binding(get: { controller.avDeckVolume }, set: controller.setAVDeckVolume),
                         play: controller.playAVPlayer,
-                        pause: controller.pauseAVPlayer
+                        pause: { controller.pauseAVPlayer() }
                     )
 
                     HStack {

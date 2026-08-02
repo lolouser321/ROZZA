@@ -7,6 +7,9 @@ struct ROZZAWebAppView: UIViewRepresentable {
     func makeCoordinator() -> Coordinator { Coordinator(dj: dj) }
 
     func makeUIView(context: Context) -> WKWebView {
+        if let persistent = dj.persistentWebView {
+            return persistent
+        }
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = .default()
         configuration.allowsInlineMediaPlayback = true
@@ -33,9 +36,9 @@ struct ROZZAWebAppView: UIViewRepresentable {
 
     func updateUIView(_ webView: WKWebView, context: Context) {}
 
-    static func dismantleUIView(_ webView: WKWebView, coordinator: Coordinator) {
-        webView.configuration.userContentController.removeScriptMessageHandler(forName: "audioSession")
-    }
+    // Intentionally keep the persistent mixer WebView and its script bridge
+    // alive. SwiftUI state updates and DJ sheet presentation must not reload it.
+    static func dismantleUIView(_ webView: WKWebView, coordinator: Coordinator) {}
 
     final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler {
         private weak var dj: DJPlaybackController?

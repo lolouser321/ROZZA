@@ -1009,7 +1009,11 @@ const YT = (() => {
       failT = setTimeout(()=>{ if(!healthy) Coordinator.onYTFailed('silent'); }, 14000);
     },
     play(){ wantPlay=true; if(ready) cmd('playVideo',[]); else if(currentId) buildIframe(currentId, true); },
-    pause(){ wantPlay=false; if(ready) cmd('pauseVideo',[]); },
+    pause(reason='ROZZA YouTube control'){
+      console.log('YouTube pause requested by:', reason);
+      wantPlay=false;
+      if(ready) cmd('pauseVideo',[]);
+    },
     seek(t){ cmd('seekTo',[t,true]); },
     setVol(v){
       vol = Math.round(clamp(v,0,1)*100);
