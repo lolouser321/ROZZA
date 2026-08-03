@@ -929,30 +929,6 @@ function postNowPlayingToNative(){
     });
   } catch(_) {}
 }
-async function getYouTubeAudioStream(videoId) {
-  if (!videoId) return null;
-  const apis = [
-    'https://pipedapi.kavin.rocks/streams/',
-    'https://api.piped.video/streams/',
-    'https://pipedapi.mha.fi/streams/',
-    'https://pipedapi.k-space.ee/streams/'
-  ];
-  for (const base of apis) {
-    try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 3500);
-      const res = await fetch(base + videoId, { signal: controller.signal });
-      clearTimeout(timeoutId);
-      if (!res.ok) continue;
-      const data = await res.json();
-      if (data && Array.isArray(data.audioStreams) && data.audioStreams.length > 0) {
-        const best = data.audioStreams.find(s => s.mimeType && s.mimeType.includes('audio/mp4')) || data.audioStreams[0];
-        if (best && best.url) return best.url;
-      }
-    } catch (_) {}
-  }
-  return null;
-}
 const Audio = (() => {
   const el = new window.Audio();
   el.playsInline = true; el.preload = 'metadata';
@@ -1047,7 +1023,9 @@ const YT = (() => {
       clearTimeout(failT);
       failT = setTimeout(()=>{ if(!healthy) Coordinator.onYTFailed('silent'); }, 14000);
     },
-    play(){ wantPlay=true; if(ready) cmd('playVideo',[]); else if(currentId) buildIframe(currentId, true); },
+    // Do not rebuild an iframe while it is still loading. Rebuilding here
+    // breaks the original tap gesture that iOS requires for audible playback.
+    play(){ wantPlay=true; if(ready) cmd('playVideo',[]); else if(currentId && !iframe) buildIframe(currentId, true); },
     pause(reason='ROZZA YouTube control'){
       console.log('YouTube pause requested by:', reason);
       wantPlay=false;
@@ -1110,28 +1088,17 @@ const Coordinator = {
     if(it.source==='youtube'){
       Audio.stop();
       activateNativeAudioSession();
-      getYouTubeAudioStream(it.videoId || it.id).then(streamUrl => {
-        if(current && ((current.videoId && current.videoId === it.videoId) || current.id === it.id)) {
-          if(streamUrl && !settings.videoDefault){
-            console.log('[ROZZA] Playing YouTube audio stream natively via Audio element:', streamUrl);
-            YT.unload();
-            Audio.vol(settings.volume);
-            Audio.load(streamUrl);
-            if(autoplay) Audio.play().catch(()=> YT.load(it.videoId || it.id, autoplay));
-          } else {
-            YT.load(it.videoId || it.id, autoplay);
-          }
-        }
-      }).catch(() => {
-        YT.load(it.videoId || it.id, autoplay);
-      });
+      // This must stay synchronous with the user's tap. Waiting for a
+      // temporary audio URL before mounting the iframe loses iOS's user-
+      // gesture permission and causes the false autoplay warning.
+      YT.load(it.videoId || it.id, autoplay);
       if(autoplay){
         this._ytT = setTimeout(()=>{
-          if(current && current.source==='youtube' && !YT.playing && !Audio.playing && !current.unavailable){
+          if(current && current.source==='youtube' && YT.ready && YT.state===2 && !YT.playing && !current.unavailable){
             setNeedsTap(true);
-            toast('Browser blocked autoplay — tap ▶ once to start sound.', 'warn', 'YOUTUBE');
+            toast('YouTube is paused — tap ▶ to try again.', 'warn', 'YOUTUBE');
           }
-        }, 3500);
+        }, 5000);
       }
     } else {
       YT.unload();
@@ -1169,15 +1136,7 @@ const Coordinator = {
   },
   onYTState(s){
     if(s===1){ UI.onPlayState(true); setNeedsTap(false); clearTimeout(this._ytT); clearTimeout(this._autoT); }
-    else if(s===2){
-      if(YT.wantPlay){
-        console.log('[ROZZA YT] Overriding WebKit background pause; resuming play');
-        YT.play();
-        UI.onPlayState(true);
-      } else {
-        UI.onPlayState(false);
-      }
-    }
+    else if(s===2){ UI.onPlayState(false); }
     else if(s===3){ UI.onPlayState(true); }
     else if(s===0){ if(YT.loadAge < 2500) return; UI.onPlayState(false); this.next(true); }
   },
@@ -1194,13 +1153,6 @@ const Coordinator = {
   }
 };
 window.Coordinator = Coordinator;
-document.addEventListener('visibilitychange', () => {
-  if (document.hidden && YT.wantPlay) {
-    console.log('[ROZZA YT] Document hidden — forcing YouTube background play');
-    YT.play();
-    activateNativeAudioSession();
-  }
-});
 function setNeedsTap(on){ const b=$('#npPlayBtn'); if(b) b.classList.toggle('needs-tap', !!on); }
 
 function mediaSession(){
