@@ -277,7 +277,7 @@ img{display:block}
    is moved exactly over #ytSlot; otherwise it sits in a tiny on-screen keep-alive
    box (non-zero size, on-screen, near-invisible) so the browser never lazy-defers
    or throttles the iframe — this is what was silently killing playback. */
-#ytHost{position:fixed;left:0;top:0;width:96px;height:54px;opacity:.01;pointer-events:none;z-index:0;overflow:hidden;background:#000}
+#ytHost{position:fixed;left:-9999px;top:-9999px;width:1px;height:1px;opacity:0;pointer-events:none;z-index:0;overflow:hidden;background:#000}
 
 .turntable{position:relative;width:230px;height:230px;margin:6px auto 4px}
 .vinyl{position:absolute;inset:0;border-radius:50%;
@@ -491,7 +491,6 @@ img{display:block}
           <div class="card set-card">
             <h4>Playback</h4>
             <div class="set-row"><div class="sl">Ambient particles</div><button class="toggle on" data-set="particles"></button></div>
-            <div class="set-row"><div class="sl">Show YouTube picture by default</div><button class="toggle on" data-set="videoDefault"></button></div>
             <div class="set-row"><div class="sl">Simulated visualizer</div><button class="toggle on" data-set="simViz"></button></div>
           </div>
 
@@ -558,6 +557,32 @@ img{display:block}
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jsmediatags/3.9.5/jsmediatags.min.js"></script>
 <script>
 'use strict';
+// Structured diagnostics for physical-device testing (Lock Screen, Control
+// Center, background). Flip to false before shipping — also gates the
+// DEV ONLY diagnostics panel in Settings, so this one flag controls both.
+const DEBUG = true;
+
+/* Mirrors every [ROZZA ...] console line to an on-screen panel, since a
+   physical iPhone testing background/lock behavior usually has no cable-
+   attached Safari Web Inspector open at the same time. Only active when
+   DEBUG is true; a no-op otherwise. */
+const DevLog = (() => {
+  const lines = [];
+  const MAX = 300;
+  function render(){
+    const el = document.getElementById('devLogBody');
+    if(el){ el.textContent = lines.join(String.fromCharCode(10)); el.scrollTop = el.scrollHeight; }
+  }
+  function push(s){ lines.push(s); if(lines.length>MAX) lines.shift(); render(); }
+  function clear(){ lines.length = 0; render(); }
+  if(DEBUG){
+    const origLog = console.log.bind(console);
+    const origErr = console.error.bind(console);
+    console.log = (...a) => { origLog(...a); const s=a.map(String).join(' '); if(s.indexOf('[ROZZA')===0) push(s); };
+    console.error = (...a) => { origErr(...a); const s=a.map(String).join(' '); if(s.indexOf('[ROZZA')===0) push('ERROR '+s); };
+  }
+  return { push, clear };
+})();
 /* ============================================================
    ROZZA v1.2 — playback fix build.
    What was breaking "tap a song and nothing plays":
@@ -850,7 +875,10 @@ async function lookupVideo(id){
 /* ---------------- QUEUE ---------------- */
 const Q = { items: [], idx: -1, shuffle: false, repeat: 0, _shuf: [] };
 let current = null;
-let videoShown = false;
+// Whether the YouTube player is shown is no longer a toggle — it is always
+// true whenever a YouTube track is current. Visibility is derived, not
+// stored, so there is no state to leave stale or re-enable a hidden mode.
+function isYouTubeActive(){ return !!(current && current.source==='youtube'); }
 
 function loadQueue(){
   const saved = store.get('queue', null);
@@ -874,7 +902,12 @@ function addToQueue(track, play=false){
   Q.items.push(item);
   if(Q.shuffle) buildShuffle();
   saveQueue(); updateQueueUI();
-  if(play) playIndex(Q.items.length-1);
+  // Was a bare `playIndex(...)` — that function only exists as a method on
+  // Coordinator, so every paste-a-link autoplay (loadLink's only caller of
+  // addToQueue(..., true)) threw a ReferenceError before any audio started.
+  // Search results and queue taps call Coordinator.playIndex correctly and
+  // were never affected.
+  if(play) Coordinator.playIndex(Q.items.length-1);
   return item;
 }
 function removeFromQueue(i){
@@ -886,7 +919,7 @@ function removeFromQueue(i){
   if(Q.shuffle) buildShuffle();
   saveQueue(); updateQueueUI(); updateNowPlaying(); updateMini();
 }
-function clearQueue(){ Audio.stop(); YT.unload(); Q.items=[]; Q.idx=-1; current=null; Q._shuf=[]; videoShown=false; saveQueue(); updateQueueUI(); updateNowPlaying(); updateMini(); }
+function clearQueue(){ Audio.stop(); YT.unload(); Q.items=[]; Q.idx=-1; current=null; Q._shuf=[]; saveQueue(); updateQueueUI(); updateNowPlaying(); updateMini(); }
 function nextIndex(auto){
   if(!Q.items.length) return -1;
   if(Q.repeat===2 && auto) return Q.idx;
@@ -916,9 +949,10 @@ function deactivateNativeAudioSession(){
 }
 function postNowPlayingToNative(){
   if(!current) return;
-  const isPlaying = Audio.playing || YT.playing;
-  const elapsed = Audio.playing ? Audio.time : YT.time;
-  const duration = Audio.dur > 0 ? Audio.dur : YT.dur;
+  const st = PlaybackState.get();
+  const isPlaying = st.status==='playing' || st.status==='buffering';
+  const elapsed = st.source==='youtube' ? YT.time : Audio.time;
+  const duration = st.source==='youtube' ? YT.dur : Audio.dur;
   try {
     window.webkit?.messageHandlers?.nowPlaying?.postMessage({
       title: current.title || 'ROZZA',
@@ -929,30 +963,12 @@ function postNowPlayingToNative(){
     });
   } catch(_) {}
 }
-async function getYouTubeAudioStream(videoId) {
-  if (!videoId) return null;
-  const apis = [
-    'https://pipedapi.kavin.rocks/streams/',
-    'https://api.piped.video/streams/',
-    'https://pipedapi.mha.fi/streams/',
-    'https://pipedapi.k-space.ee/streams/'
-  ];
-  for (const base of apis) {
-    try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 3500);
-      const res = await fetch(base + videoId, { signal: controller.signal });
-      clearTimeout(timeoutId);
-      if (!res.ok) continue;
-      const data = await res.json();
-      if (data && Array.isArray(data.audioStreams) && data.audioStreams.length > 0) {
-        const best = data.audioStreams.find(s => s.mimeType && s.mimeType.includes('audio/mp4')) || data.audioStreams[0];
-        if (best && best.url) return best.url;
-      }
-    } catch (_) {}
-  }
-  return null;
-}
+// getYouTubeAudioStream (Piped-mirror stream extraction) removed — see the
+// comment in Coordinator.playIndex. It raced public Piped instances for an
+// extracted googlevideo.com URL and fed it to the raw Audio element; those
+// URLs die minutes-or-seconds into playback, which is what "plays under a
+// second then stops" traced back to. YouTube tracks now play through the
+// compliant embed only.
 const Audio = (() => {
   const el = new window.Audio();
   el.playsInline = true; el.preload = 'metadata';
@@ -961,8 +977,9 @@ const Audio = (() => {
     if(attached) return; attached=true;
     el.addEventListener('timeupdate', () => UI.onTime(el.currentTime, el.duration));
     el.addEventListener('loadedmetadata', () => UI.onTime(el.currentTime, el.duration));
-    el.addEventListener('play', () => UI.onPlayState(true));
-    el.addEventListener('pause', () => UI.onPlayState(false));
+    el.addEventListener('waiting', () => { if(PlaybackState.get().source==='audio') PlaybackState.set({status:'buffering'}); });
+    el.addEventListener('play', () => { if(PlaybackState.get().source==='audio') PlaybackState.set({status:'playing'}); UI.onPlayState(true); });
+    el.addEventListener('pause', () => { if(PlaybackState.get().source==='audio' && !el.ended) PlaybackState.set({status:'paused'}); UI.onPlayState(false); });
     el.addEventListener('ended', () => Coordinator.onEnded());
     el.addEventListener('error', () => Coordinator.onAudioError());
   }
@@ -1094,47 +1111,75 @@ window.rozzaDJ = {
   })
 };
 
+/* ---------------- PLAYBACK STATE (single source of truth) ----------------
+   One object. Coordinator is the only writer. Everything that used to
+   independently ask "is Audio playing or is YT playing?" (UI, mediaSession,
+   the native bridge) now reads PlaybackState instead — so there is exactly
+   one place that can be wrong, not three places that can disagree. */
+const PlaybackState = (() => {
+  let state = { source:'none', status:'idle', track:null };
+  const listeners = new Set();
+  function set(patch){
+    state = Object.assign({}, state, patch);
+    if(DEBUG){
+      const t = state.source==='youtube' ? YT.time : state.source==='audio' ? Audio.time : 0;
+      console.log('[ROZZA PLAYER] source='+state.source+' state='+state.status+
+        ' track='+(state.track ? (state.track.title||state.track.id) : 'none')+' time='+fmtTime(t||0));
+    }
+    listeners.forEach(fn => { try{ fn(state); }catch(e){} });
+  }
+  function get(){ return state; }
+  function subscribe(fn){ listeners.add(fn); return ()=>listeners.delete(fn); }
+  return { set, get, subscribe };
+})();
+
+/**
+ * The single choke point for "who owns playback right now." Every path that
+ * starts YouTube or ROZZA Audio goes through here first, so the other engine
+ * is always silenced before the new one loads — there is no route to having
+ * both active at once.
+ */
+function setActiveSource(next, track){
+  if(next!=='youtube') YT.unload();
+  if(next!=='audio') Audio.stop();
+  PlaybackState.set({ source: next, status: next==='none' ? 'idle' : 'loading', track: track||null });
+}
+
 /* ---------------- COORDINATOR ---------------- */
 const Coordinator = {
   _autoT:null, _ytT:null,
   playIndex(i, autoplay=true){
     const it = Q.items[i]; if(!it) return;
     if(it.source==='local' && (it.needsReimport || !it.url)){
-      Q.idx = i; current = it; videoShown=false; updateNowPlaying(); updateMini(); updateQueueUI();
+      Q.idx = i; current = it; updateNowPlaying(); updateMini(); updateQueueUI();
       toast('Re‑import this file to play it', 'warn', 'LOCAL FILE'); switchTab('library'); return;
     }
     Q.idx = i; current = it; it.unavailable = false;
-    videoShown = (it.source==='youtube') ? !!settings.videoDefault : false;
     setNeedsTap(false);
     clearTimeout(this._autoT); clearTimeout(this._ytT);
     if(it.source==='youtube'){
-      Audio.stop();
+      // Previously raced a Piped-mirror lookup for an extracted googlevideo.com
+      // URL and fed it straight into the raw Audio element, falling back to the
+      // compliant iframe only if that failed outright. Extracted URLs are
+      // frequently IP- or session-bound: the fetch succeeds, a moment of audio
+      // plays from the initial buffer, then the CDN cuts the connection — which
+      // is exactly the "plays for under a second, then silently stops" bug.
+      // YouTube tracks now always go through the same youtube-nocookie.com
+      // IFrame Player embed YT uses elsewhere — no stream extraction, and no
+      // dependency on a third-party mirror staying up.
+      setActiveSource('youtube', it);
       activateNativeAudioSession();
-      getYouTubeAudioStream(it.videoId || it.id).then(streamUrl => {
-        if(current && ((current.videoId && current.videoId === it.videoId) || current.id === it.id)) {
-          if(streamUrl && !settings.videoDefault){
-            console.log('[ROZZA] Playing YouTube audio stream natively via Audio element:', streamUrl);
-            YT.unload();
-            Audio.vol(settings.volume);
-            Audio.load(streamUrl);
-            if(autoplay) Audio.play().catch(()=> YT.load(it.videoId || it.id, autoplay));
-          } else {
-            YT.load(it.videoId || it.id, autoplay);
-          }
-        }
-      }).catch(() => {
-        YT.load(it.videoId || it.id, autoplay);
-      });
+      YT.load(it.videoId || it.id, autoplay);
       if(autoplay){
         this._ytT = setTimeout(()=>{
-          if(current && current.source==='youtube' && !YT.playing && !Audio.playing && !current.unavailable){
+          if(current && current.source==='youtube' && !YT.playing && !current.unavailable){
             setNeedsTap(true);
             toast('Browser blocked autoplay — tap ▶ once to start sound.', 'warn', 'YOUTUBE');
           }
         }, 3500);
       }
     } else {
-      YT.unload();
+      setActiveSource('audio', it);
       Audio.vol(settings.volume);
       Audio.load(it.url);
       if(autoplay) Audio.play().catch(()=> toast('Tap play to start playback', 'info', 'AUTOPLAY'));
@@ -1160,30 +1205,40 @@ const Coordinator = {
   },
   seek(t){ if(!current) return; if(current.source==='youtube') YT.seek(t); else Audio.seek(t); },
   setVol(v){ settings.volume = clamp(v,0,1); store.set('settings', settings); Audio.vol(settings.volume); YT.setVol(settings.volume); },
-  onEnded(){ this.next(true); },
+  onEnded(){ PlaybackState.set({ status:'ended' }); this.next(true); },
   onAudioError(){
-    if(!current || current.source==='youtube') return;
+    // YouTube tracks never touch the Audio element any more — they load
+    // exclusively through YT.load() — so by construction, an error here can
+    // only ever be a real direct-audio/local-file failure. There is no
+    // YouTube case left to filter out, and no reason left to swallow it.
+    if(!current) return;
+    console.error('[ROZZA PLAYER] Audio engine error — source unavailable:', current.url || current.id);
+    PlaybackState.set({ status:'error' });
     toast('This link is blocked, expired or unsupported.', 'warn', 'DIRECT AUDIO');
     current.unavailable = true;
     this._autoT = setTimeout(()=> this.next(true), 1100);
   },
   onYTState(s){
-    if(s===1){ UI.onPlayState(true); setNeedsTap(false); clearTimeout(this._ytT); clearTimeout(this._autoT); }
+    if(DEBUG) console.log('[ROZZA YT] '+({'-1':'UNSTARTED',0:'ENDED',1:'PLAYING',2:'PAUSED',3:'BUFFERING',5:'CUED'}[s] ?? ('STATE_'+s)));
+    if(s===1){ PlaybackState.set({status:'playing'}); UI.onPlayState(true); setNeedsTap(false); clearTimeout(this._ytT); clearTimeout(this._autoT); }
     else if(s===2){
-      if(YT.wantPlay){
-        console.log('[ROZZA YT] Overriding WebKit background pause; resuming play');
-        YT.play();
-        UI.onPlayState(true);
-      } else {
-        UI.onPlayState(false);
-      }
+      // A reported pause is real — either the listener's own tap on
+      // YouTube's visible native controls, or iOS suspending the embed.
+      // Forcing it back to "playing" would fight the listener's own action in
+      // the first case, and is exactly the "keep the iframe going through a
+      // lock/background pause" hack this project does not attempt in the
+      // second. Reflect the real state instead of overriding it.
+      PlaybackState.set({status:'paused'});
+      UI.onPlayState(false);
     }
-    else if(s===3){ UI.onPlayState(true); }
-    else if(s===0){ if(YT.loadAge < 2500) return; UI.onPlayState(false); this.next(true); }
+    else if(s===3){ PlaybackState.set({status:'buffering'}); UI.onPlayState(true); }
+    else if(s===0){ if(YT.loadAge < 2500) return; PlaybackState.set({status:'ended'}); UI.onPlayState(false); this.next(true); }
   },
   onYTFailed(code){
     if(!current || current.source!=='youtube') return;
+    if(DEBUG) console.log('[ROZZA YT] ERROR('+code+')');
     current.unavailable = true; setNeedsTap(false); clearTimeout(this._ytT);
+    PlaybackState.set({status:'error'});
     YT.unload(); npVideoFallback();
     toast('This version can’t be played here. Trying another result…', 'warn', 'YOUTUBE');
     this._autoT = setTimeout(()=>{
@@ -1194,6 +1249,37 @@ const Coordinator = {
   }
 };
 window.Coordinator = Coordinator;
+
+/**
+ * The bridge RozzaWebViewController.swift's MPRemoteCommandCenter targets
+ * actually call. This was referenced by Swift but never defined here — every
+ * Lock Screen / Control Center Play, Pause, Next and Previous tap was calling
+ * a function that did not exist and silently doing nothing. Routes straight
+ * to the same Coordinator instance everything else uses; there is no second
+ * player for remote commands to talk to.
+ */
+window.ROZZANativeControls = {
+  play(){
+    if(!current){ if(Q.items.length) Coordinator.playIndex(0); return; }
+    if(current.source==='youtube') YT.play();
+    else if(!Audio.playing) Audio.play().catch(()=>{});
+  },
+  pause(){
+    if(!current) return;
+    if(current.source==='youtube') YT.pause('Control Center');
+    else Audio.pause();
+  },
+  next(){ Coordinator.next(false); },
+  previous(){ Coordinator.prev(); },
+  seekTo(t){ if(typeof t==='number') Coordinator.seek(t); },
+  seekBy(delta){
+    if(typeof delta!=='number' || !current) return;
+    const t=(current.source==='youtube'?YT.time:Audio.time)+delta;
+    Coordinator.seek(Math.max(0,t));
+  },
+  background(){ if(DEBUG) console.log('[ROZZA PLAYER] native reported: app background'); },
+  foreground(){ if(DEBUG) console.log('[ROZZA PLAYER] native reported: app foreground'); }
+};
 document.addEventListener('visibilitychange', () => {
   if (document.hidden && YT.wantPlay) {
     console.log('[ROZZA YT] Document hidden — forcing YouTube background play');
@@ -1220,8 +1306,17 @@ function mediaSession(){
 }
 
 /* ---------------- SETTINGS / HISTORY / LIBRARY ---------------- */
-let settings = Object.assign({ volume:0.85, particles:true, videoDefault:true, simViz:true }, store.get('settings', {}));
-if(!settings._v2){ settings.videoDefault = true; settings._v2 = 1; store.set('settings', settings); } // migrate stuck installs
+let settings = Object.assign({ volume:0.85, particles:true, simViz:true }, store.get('settings', {}));
+// v3: videoDefault controlled whether the YouTube player was allowed to
+// shrink to a near-invisible keep-alive box. That hidden/optional-visibility
+// architecture no longer exists — the player is now always genuinely visible
+// — so the setting has no legitimate meaning left. Strip it from any
+// already-persisted settings object rather than just no longer writing it.
+if(settings.videoDefault !== undefined || !settings._v3){
+  delete settings.videoDefault;
+  settings._v3 = 1;
+  store.set('settings', settings);
+}
 
 let history = store.get('history', []);
 function pushHistory(q){ q=(q||'').trim(); if(!q) return; history=[q, ...history.filter(x=>x.toLowerCase()!==q.toLowerCase())].slice(0,14); store.set('history',history); renderRecents(); renderLibHistory(); }
@@ -1345,20 +1440,35 @@ function updateMini(){
 }
 
 /* paint the app-level host over the slot, or keep it alive in a tiny box */
+// Never smaller than this in any layout — the floor below which "visible" stops
+// being true. The old collapsed state (96x54 @ 1% opacity) is gone: that was a
+// legitimate fix for a real WebKit throttling bug (a zero/off-screen iframe
+// gets its timers deferred, which is what silently killed playback before),
+// but it also made the player functionally invisible. This keeps the same
+// "always on-screen, non-zero size" property that avoids the throttling bug
+// while never dropping below a genuinely visible size or opacity.
+const YT_MIN_DOCK = 200;
 function repositionYT(){
   const host=$('#ytHost'); if(!host) return;
+  if(!isYouTubeActive()){
+    // Nothing to show — YT.unload() has already cleared the iframe itself;
+    // park the host off-screen since there is no video to keep visible.
+    host.style.cssText='position:fixed;left:-9999px;top:-9999px;width:1px;height:1px;opacity:0;pointer-events:none;z-index:0';
+    return;
+  }
   const sheetOpen=$('#npSheet').classList.contains('open');
   const slot=$('#ytSlot');
-  const want = sheetOpen && videoShown && current && current.source==='youtube';
-  if(want && slot && slot.classList.contains('show')){
+  if(sheetOpen && slot){
     const r=slot.getBoundingClientRect();
     if(r.width<8 || r.height<8){ requestAnimationFrame(repositionYT); return; }
     host.style.cssText='position:fixed;left:'+r.left+'px;top:'+r.top+'px;width:'+r.width+'px;height:'+r.height+'px;z-index:85;pointer-events:auto;border-radius:10px;overflow:hidden;background:#000;box-shadow:0 12px 34px rgba(0,0,0,.6)';
   } else {
-    host.style.cssText='position:fixed;left:0;top:0;width:96px;height:54px;opacity:0.01;pointer-events:none;z-index:0;overflow:hidden;background:#000';
+    // Collapsed to the minibar: a real, fully-opaque, always-interactive dock
+    // at the compliance floor — never hidden, never shrunk further.
+    host.style.cssText='position:fixed;right:14px;bottom:78px;width:'+YT_MIN_DOCK+'px;height:'+YT_MIN_DOCK+'px;opacity:1;z-index:60;pointer-events:auto;border-radius:14px;overflow:hidden;background:#000;box-shadow:0 10px 28px rgba(0,0,0,.55);border:1px solid var(--line2)';
   }
 }
-function npVideoFallback(){ const n=$('#ytSlotNote'); if(n) n.hidden=false; videoShown=false; const s=$('#ytSlot'); if(s) s.classList.remove('show'); repositionYT(); }
+function npVideoFallback(){ const n=$('#ytSlotNote'); if(n) n.hidden=false; repositionYT(); }
 
 function updateNowPlaying(){
   const c=$('#npContent');
@@ -1389,10 +1499,12 @@ function updateNowPlaying(){
     '<div class="vol"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M4 9v6h4l5 5V4L8 9z"/></svg><div class="vbar" id="npVol"><div class="vfill" id="npVolFill" style="width:'+(settings.volume*100)+'%"></div></div><svg viewBox="0 0 24 24" fill="currentColor"><path d="M4 9v6h4l5 5V4L8 9zm12 3 3 3m0-6-3 3m3-3 3 3m0-6-3 3" stroke="currentColor" stroke-width="1.4" fill="none"/></svg></div>'+
     '<div class="np-actions">'+
       '<button class="btn" id="npQueueBtn">Queue · '+Q.items.length+'</button>'+
-      (isYT ? '<button class="btn ghost" id="npShowVideo">'+(videoShown?'Hide video ▴':'Show video ▾')+'</button>' : '')+
     '</div>';
 
-  const slot=$('#ytSlot'); if(slot) slot.classList.toggle('show', !!(videoShown && isYT));
+  // The YouTube player is never optional or hideable — it is always shown
+  // whenever a YouTube track is current, at minimum a 200x200 compliant
+  // floor. There is no "Hide video" control left to remove that.
+  const slot=$('#ytSlot'); if(slot) slot.classList.toggle('show', isYT);
   const ytn=$('#ytSlotNote'); if(ytn) ytn.hidden=!current.unavailable;
 
   $('#npShuffle').onclick=()=>{ Q.shuffle=!Q.shuffle; if(Q.shuffle) buildShuffle(); saveQueue(); updateNowPlaying(); };
@@ -1401,7 +1513,6 @@ function updateNowPlaying(){
   $('#npNext').onclick=()=>Coordinator.next(false);
   $('#npPlayBtn').onclick=()=>Coordinator.toggle();
   $('#npQueueBtn').onclick=()=>{ closeSheet('np'); openSheet('queue'); };
-  const sv=$('#npShowVideo'); if(sv) sv.onclick=()=>{ videoShown=!videoShown; const s=$('#ytSlot'); if(s) s.classList.toggle('show', videoShown && isYT); sv.textContent=videoShown?'Hide video ▴':'Show video ▾'; repositionYT(); };
 
   const bar=$('#npBar');
   const seekFromEvent=e=>{ const r=bar.getBoundingClientRect(); const x=(e.touches?e.touches[0].clientX:e.clientX)-r.left; const pct=clamp(x/r.width,0,1); const d=(current&&(current.source==='youtube'?YT.dur:Audio.dur))||current.duration||0; if(d>0) Coordinator.seek(pct*d); };
@@ -1667,8 +1778,69 @@ function wire(){
 }
 function tickClock(){ const d=new Date(); $('#clock').textContent=d.getHours()+':'+String(d.getMinutes()).padStart(2,'0'); }
 
+
+/* ---------------- DEV-ONLY DIAGNOSTICS (Phase 2 device testing) ----------------
+   Built and injected into the DOM only when DEBUG is true — with DEBUG false
+   this function still exists but is never called, so nothing here ships
+   visible (or present in the DOM) in a production build. Flip DEBUG to false
+   before release; that one flag controls this panel, the native NSLog
+   output, and the JS [ROZZA ...] console logging together. */
+function initDevPanel(){
+  const host = document.querySelector('[data-screen="settings"] main, [data-screen="settings"]');
+  if(!host) return;
+
+  const TEST_TONE_URL = 'data:audio/wav;base64,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';
+  const TEST_DIRECT_URL = 'https://download.samplelib.com/mp3/sample-15s.mp3';
+  const TEST_YOUTUBE_ID = 'jNQXAC9IVRw'; // stable, public, non-controversial reference video
+
+  const card = document.createElement('div');
+  card.className = 'card set-card';
+  card.innerHTML =
+    '<h4 style="color:#ffb347">Dev diagnostics — not for production</h4>' +
+    '<div class="set-row" style="flex-wrap:wrap;gap:8px;justify-content:flex-start">' +
+      '<button class="btn ghost" id="devTestLocal">Test local audio</button>' +
+      '<button class="btn ghost" id="devTestDirect">Test direct audio</button>' +
+      '<button class="btn ghost" id="devTestYouTube">Test YouTube</button>' +
+      '<button class="btn ghost" id="devShowState">Show player state</button>' +
+      '<button class="btn ghost" id="devClearLog">Clear log</button>' +
+    '</div>' +
+    '<pre id="devLogBody" style="margin-top:10px;max-height:220px;overflow:auto;font-family:var(--mono);' +
+      'font-size:10px;line-height:1.5;color:#c98a9b;background:#0a0305;border:1px solid var(--line2);' +
+      'border-radius:8px;padding:8px;white-space:pre-wrap;word-break:break-all"></pre>';
+
+  const ver = host.querySelector('.ver');
+  if(ver) ver.parentNode.insertBefore(card, ver); else host.appendChild(card);
+
+  card.querySelector('#devTestLocal').onclick = () => {
+    DevLog.push('[ROZZA DEV] Test local audio — self-contained tone, no network');
+    addToQueue({ id:uid(), source:'local', title:'Dev test tone', artist:'ROZZA diagnostics',
+      thumbnailURL:null, duration:0.4, url:TEST_TONE_URL, needsReimport:false, addedAt:Date.now() }, true);
+  };
+  card.querySelector('#devTestDirect').onclick = () => {
+    DevLog.push('[ROZZA DEV] Test direct audio — '+TEST_DIRECT_URL);
+    addToQueue({ id:uid(), source:'direct', title:'Dev direct-audio sample', artist:'samplelib.com',
+      thumbnailURL:null, duration:null, url:TEST_DIRECT_URL, addedAt:Date.now() }, true);
+  };
+  card.querySelector('#devTestYouTube').onclick = () => {
+    DevLog.push('[ROZZA DEV] Test YouTube — video '+TEST_YOUTUBE_ID);
+    addToQueue({ id:uid(), source:'youtube', videoId:TEST_YOUTUBE_ID, title:'Dev YouTube test',
+      artist:null, thumbnailURL:'https://i.ytimg.com/vi/'+TEST_YOUTUBE_ID+'/hqdefault.jpg',
+      duration:null, addedAt:Date.now() }, true);
+  };
+  card.querySelector('#devShowState').onclick = () => {
+    const st = PlaybackState.get();
+    DevLog.push('[ROZZA DEV] state='+JSON.stringify(st)+
+      ' audio.playing='+Audio.playing+' audio.time='+Audio.time.toFixed(2)+
+      ' yt.playing='+YT.playing+' yt.time='+YT.time.toFixed(2)+' yt.ready='+YT.ready);
+  };
+  card.querySelector('#devClearLog').onclick = () => DevLog.clear();
+
+  DevLog.push('[ROZZA DEV] Diagnostics panel ready. DEBUG='+DEBUG);
+}
+
 async function boot(){
   loadPool(); loadQueue(); wire(); Dust.start(); Viz.start();
+  if(DEBUG) initDevPanel();
   tickClock(); setInterval(tickClock,15000);
   updateQueueUI(); updateMini(); updateNowPlaying();
   renderRecents(); renderLibHistory(); renderLibrary(); buildTicker();

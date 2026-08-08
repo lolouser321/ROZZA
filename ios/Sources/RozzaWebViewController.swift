@@ -26,12 +26,23 @@ final class RozzaWebViewController: UIViewController {
         let contentController = WKUserContentController()
         configuration.userContentController = contentController
 
+        // yt_video_play_messenger.js ("Pure Tube" behavioral reference, see
+        // PURE_TUBE_MAPPING.md) used to inject into every frame — including the
+        // YouTube embed subframe itself — where it read the embed's raw <video>
+        // element directly and spoofed document.hidden/visibilitychange via
+        // focustApp() to keep it from pausing when backgrounded. That duplicated
+        // what ROZZA's own compliant postMessage-based YT controller already
+        // does, and reaching into the embed's own DOM to defeat its pause
+        // behavior is exactly the kind of interference this build no longer
+        // does. forMainFrameOnly is now true: the script still loads (rozza2.html
+        // itself has no <video> tags, so its scan loop is inert there) but it no
+        // longer touches the YouTube iframe's content.
         if let bridgeURL = Bundle.main.url(forResource: "yt_video_play_messenger", withExtension: "js"),
            let bridgeSource = try? String(contentsOf: bridgeURL, encoding: .utf8) {
             let bridge = WKUserScript(
                 source: bridgeSource,
                 injectionTime: .atDocumentEnd,
-                forMainFrameOnly: false
+                forMainFrameOnly: true
             )
             contentController.addUserScript(bridge)
         }
@@ -48,6 +59,7 @@ final class RozzaWebViewController: UIViewController {
     }
 
     deinit {
+        if DebugConfig.isEnabled { NSLog("[ROZZA NATIVE] RozzaWebViewController deinit") }
         Handler.allCases.forEach {
             webView.configuration.userContentController.removeScriptMessageHandler(forName: $0.rawValue)
         }
@@ -57,6 +69,7 @@ final class RozzaWebViewController: UIViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
+        if DebugConfig.isEnabled { NSLog("[ROZZA NATIVE] RozzaWebViewController viewDidLoad — WKWebView created once here") }
         view.backgroundColor = UIColor(red: 0.051, green: 0.016, blue: 0.024, alpha: 1)
 
         webView.translatesAutoresizingMaskIntoConstraints = false
@@ -117,6 +130,7 @@ final class RozzaWebViewController: UIViewController {
         do {
             try session.setCategory(.playback, mode: .default, options: [.allowAirPlay])
             try session.setActive(true)
+            if DebugConfig.isEnabled { NSLog("[ROZZA NATIVE] Audio session active") }
         } catch {
             NSLog("[ROZZA] Could not activate audio session: %@", error.localizedDescription)
         }
@@ -125,6 +139,7 @@ final class RozzaWebViewController: UIViewController {
     private func deactivateAudioSession() {
         do {
             try AVAudioSession.sharedInstance().setActive(false, options: [.notifyOthersOnDeactivation])
+            if DebugConfig.isEnabled { NSLog("[ROZZA NATIVE] Audio session deactivated") }
         } catch {
             NSLog("[ROZZA] Could not deactivate audio session: %@", error.localizedDescription)
         }
@@ -149,6 +164,12 @@ final class RozzaWebViewController: UIViewController {
             name: UIApplication.willEnterForegroundNotification,
             object: nil
         )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(appWillResignActive),
+            name: UIApplication.willResignActiveNotification,
+            object: nil
+        )
     }
 
     @objc private func handleInterruption(_ notification: Notification) {
@@ -171,13 +192,26 @@ final class RozzaWebViewController: UIViewController {
     }
 
     @objc private func appDidEnterBackground() {
+        if DebugConfig.isEnabled { NSLog("[ROZZA NATIVE] App background") }
         guard lastKnownPlayingState else { return }
         activateAudioSession()
-        evaluate("if(typeof focustApp==='function'){try{focustApp()}catch(e){}}; if(window.ROZZANativeControls){window.ROZZANativeControls.background();}")
+        // Previously also called focustApp(), which spoofed document.hidden /
+        // visibilitychange inside the page to stop the embedded YouTube player
+        // from reacting to being backgrounded. That is the "hack to keep the
+        // iframe going while backgrounded" this build does not attempt — the
+        // ROZZA Audio engine keeps playing on its own merits via the real
+        // background audio session; YouTube playback follows YouTube's own
+        // foreground-only rules with no interference.
+        evaluate("if(window.ROZZANativeControls){window.ROZZANativeControls.background();}")
     }
 
     @objc private func appWillEnterForeground() {
+        if DebugConfig.isEnabled { NSLog("[ROZZA NATIVE] App foreground") }
         evaluate("if(window.ROZZANativeControls){window.ROZZANativeControls.foreground();}")
+    }
+
+    @objc private func appWillResignActive() {
+        if DebugConfig.isEnabled { NSLog("[ROZZA NATIVE] App inactive") }
     }
 
     private func configureRemoteCommands() {
@@ -193,19 +227,23 @@ final class RozzaWebViewController: UIViewController {
         commands.skipBackwardCommand.preferredIntervals = [15]
 
         commands.playCommand.addTarget { [weak self] _ in
+            if DebugConfig.isEnabled { NSLog("[ROZZA NATIVE] Remote command: play") }
             self?.activateAudioSession()
             self?.runNativeControl("play")
             return .success
         }
         commands.pauseCommand.addTarget { [weak self] _ in
+            if DebugConfig.isEnabled { NSLog("[ROZZA NATIVE] Remote command: pause") }
             self?.runNativeControl("pause")
             return .success
         }
         commands.nextTrackCommand.addTarget { [weak self] _ in
+            if DebugConfig.isEnabled { NSLog("[ROZZA NATIVE] Remote command: next") }
             self?.runNativeControl("next")
             return .success
         }
         commands.previousTrackCommand.addTarget { [weak self] _ in
+            if DebugConfig.isEnabled { NSLog("[ROZZA NATIVE] Remote command: previous") }
             self?.runNativeControl("previous")
             return .success
         }
@@ -330,8 +368,33 @@ extension RozzaWebViewController: WKScriptMessageHandler {
 }
 
 extension RozzaWebViewController: WKNavigationDelegate, WKUIDelegate {
+    // Navigation lifecycle logging. The whole app is one WKWebView loaded once
+    // from loadROZZA() in viewDidLoad — there is no SwiftUI updateUIView, no
+    // periodic reload, nothing that should trigger any of these a second time
+    // after first launch. These logs are how that gets proven on-device rather
+    // than assumed from reading the code.
+    func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+        if DebugConfig.isEnabled { NSLog("[ROZZA NATIVE] WKWebView didStartProvisionalNavigation") }
+    }
+
+    func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
+        if DebugConfig.isEnabled { NSLog("[ROZZA NATIVE] WKWebView didCommit") }
+    }
+
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-        evaluate("if(typeof setupPlayPauseListener==='function'){try{setupPlayPauseListener()}catch(e){}}")
+        if DebugConfig.isEnabled { NSLog("[ROZZA NATIVE] WKWebView didFinish") }
+    }
+
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        NSLog("[ROZZA NATIVE] WKWebView didFail: %@", error.localizedDescription)
+    }
+
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        NSLog("[ROZZA NATIVE] WKWebView didFailProvisionalNavigation: %@", error.localizedDescription)
+    }
+
+    func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        NSLog("[ROZZA NATIVE] WKWebView content process terminated")
     }
 
     func webView(
