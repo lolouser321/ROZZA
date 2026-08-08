@@ -1,0 +1,36 @@
+name: Unsigned iOS IPA
+
+on:
+  push:
+    branches: [main, agent/unsigned-ipa]
+  workflow_dispatch:
+
+jobs:
+  build-unsigned-ipa:
+    name: Build unsigned device IPA
+    runs-on: macos-15
+    timeout-minutes: 35
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Generate Xcode project
+        run: |
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-version
+          brew install xcodegen
+
+      - name: Verify resources, build app, and package IPA
+        run: |
+          chmod +x Scripts/verify-ios-resources.sh Scripts/build-unsigned-ipa.sh
+          Scripts/build-unsigned-ipa.sh
+          unzip -l build/ROZZA-Unsigned.ipa | grep -E 'Payload/ROZZA.app/(Assets.car|rozza2.html|yt_video_play_messenger.js)'
+          ls -lh build/ROZZA-Unsigned.ipa
+
+      - name: Upload unsigned IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: ROZZA-Unsigned-IPA
+          path: build/ROZZA-Unsigned.ipa
+          retention-days: 30
+
