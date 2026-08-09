@@ -562,6 +562,65 @@ img{display:block}
 // DEV ONLY diagnostics panel in Settings, so this one flag controls both.
 const DEBUG = true;
 
+/**
+ * Timestamped ring buffer for the exact YouTube playback lifecycle: load,
+ * iframe creation, every state transition, every command sent and why, every
+ * startup-recovery attempt. Retrievable from Safari Web Inspector / Xcode as
+ * `window.ROZZADebug.getLog()` without needing the app to still be in the
+ * failure state — this is the record of what happened, not a live view.
+ */
+const ROZZADebug = (() => {
+  const startedAt = Date.now();
+  const entries = [];
+  const MAX = 500;
+  function elapsed(){ return ((Date.now() - startedAt) / 1000).toFixed(3); }
+  function log(tag, line){
+    const formatted = '[ROZZA '+tag+' +'+elapsed()+'] '+line;
+    entries.push(formatted);
+    if(entries.length > MAX) entries.shift();
+    if(DEBUG) console.log(formatted);
+  }
+  return {
+    yt(line){ log('YT', line); },
+    native(line){ log('NATIVE', line); },
+    player(line){ log('PLAYER', line); },
+    getLog(){ return entries.join(String.fromCharCode(10)); },
+    getEntries(){ return entries.slice(); },
+    clear(){ entries.length = 0; },
+    /**
+     * A snapshot of every field the recovery decision actually reads, for
+     * inspection from Safari Web Inspector / Xcode without needing the
+     * failure to still be reproducing. All referenced names (YT,
+     * ForegroundRecovery, ROZZAAppForeground, ...) are declared later in this
+     * script but that's fine — this function only runs when called, always
+     * well after the whole file has finished its first pass.
+     */
+    getState(){
+      return {
+        videoId: (typeof YT !== 'undefined') ? YT.videoId : null,
+        source: current ? current.source : null,
+        playerState: (typeof YT !== 'undefined') ? YT.state : null,
+        wantPlay: (typeof YT !== 'undefined') ? YT.wantPlay : null,
+        foreground: (typeof ROZZAAppForeground !== 'undefined') ? ROZZAAppForeground : null,
+        documentHidden: document.hidden,
+        documentVisibilityState: document.visibilityState,
+        interruptionActive: (typeof ROZZAInterruptionActive !== 'undefined') ? ROZZAInterruptionActive : null,
+        isSwitchingTrack: (typeof Coordinator !== 'undefined') ? Coordinator.isSwitchingTrack : null,
+        isSeeking: (typeof YT !== 'undefined') ? YT.isSeeking : null,
+        lastPlayRequestAt: (typeof YT !== 'undefined') ? YT.lastPlayRequestAt : null,
+        lastExplicitPauseAt: (typeof YT !== 'undefined') ? YT.lastExplicitPauseAt : null,
+        lastPlayingAt: (typeof YT !== 'undefined') ? YT.lastPlayingAt : null,
+        startupRecoveryCount: (typeof YT !== 'undefined') ? YT.startupRecoveryCount : null,
+        foregroundRecoveryCount: (typeof ForegroundRecovery !== 'undefined') ? ForegroundRecovery.count() : null,
+        foregroundRecoveryBudgetRemaining: (typeof ForegroundRecovery !== 'undefined')
+          ? (YT_MAX_FOREGROUND_RECOVERIES - ForegroundRecovery.count()) : null,
+        lastRecoveryReason: (typeof YT !== 'undefined') ? YT.lastRecoveryReason : null
+      };
+    }
+  };
+})();
+window.ROZZADebug = ROZZADebug;
+
 /* Mirrors every [ROZZA ...] console line to an on-screen panel, since a
    physical iPhone testing background/lock behavior usually has no cable-
    attached Safari Web Inspector open at the same time. Only active when
@@ -999,10 +1058,27 @@ const Audio = (() => {
 })();
 
 /* ---------------- YOUTUBE (postMessage; fresh in-gesture iframe) ---------------- */
+// How long after the first PLAYING state a reported PAUSED is still treated as
+// a possible startup hiccup rather than a real pause. Outside this window,
+// every pause is taken at face value.
+const YT_STARTUP_WINDOW_MS = 4000;
+// Ceiling on automatic recovery attempts. This is not a retry loop — it fires
+// at most this many times per track load, ever, then gives up and accepts
+// whatever YouTube reports.
+const YT_MAX_STARTUP_RECOVERIES = 2;
+
 const YT = (() => {
   let iframe=null, ready=false, healthy=false, state=-1, time=0, dur=0, vol=80, reportedVol=80;
   let wantPlay=false, currentId=null, loadStartedAt=0, msgAttached=false;
-  let pollT=null, failT=null;
+  let pollT=null, failT=null, recoveryT=null;
+  // Explicit playback intent, distinct from what the player happens to report.
+  // A PAUSED event while wantPlay is true is a candidate for recovery under
+  // one of two categories decided in Coordinator.onYTState: "startup" (never
+  // yet confirmed playing this load) or "foreground" (was confirmed playing,
+  // then stopped unexpectedly). A PAUSED after an explicit pause() call is
+  // always accepted as real, in either category.
+  let lastPlayRequestAt=0, lastExplicitPauseAt=0, lastPlayingAt=0, startupRecoveryCount=0;
+  let seekingUntil=0, lastRecoveryReason=null;
   const YT_RE = /(^|\.)youtube(-nocookie)?\.com$/;
   const hostEl = () => document.getElementById('ytHost');
   function attachMsg(){ if(msgAttached) return; msgAttached=true; window.addEventListener('message', onMsg); }
@@ -1021,18 +1097,21 @@ const YT = (() => {
       if(typeof inf.playerState==='number'){ const ps=inf.playerState; if(ps!==state){ state=ps; Coordinator.onYTState(ps); } }
       if(d.event==='initialDelivery'){
         ready = true;
+        ROZZADebug.yt('READY id='+currentId);
         post({event:'listening', id:'rozza', channel:'widget'});
         cmd('addEventListener', ['onStateChange']);
         cmd('addEventListener', ['onError']);
         cmd('setVolume', [vol]);
-        if(wantPlay) cmd('playVideo', []);
+        if(wantPlay){ ROZZADebug.yt('CMD PLAY reason=ready-and-wantPlay'); lastPlayRequestAt=Date.now(); cmd('playVideo', []); }
       }
       UI.onTime(time, dur);
     } else if(d.event==='onStateChange'){
       const s = typeof d.info==='number' ? d.info : (d.info && d.info.playerState);
       if(typeof s==='number'){ state=s; healthy=true; Coordinator.onYTState(s); }
     } else if(d.event==='onError'){
-      Coordinator.onYTFailed(typeof d.info==='number' ? d.info : NaN);
+      const code = typeof d.info==='number' ? d.info : NaN;
+      ROZZADebug.yt('ERROR('+code+') id='+currentId);
+      Coordinator.onYTFailed(code);
     }
   }
   function post(o){ try{ if(iframe && iframe.contentWindow) iframe.contentWindow.postMessage(JSON.stringify(o), 'https://www.youtube-nocookie.com'); }catch(_){} }
@@ -1047,40 +1126,129 @@ const YT = (() => {
     iframe.setAttribute('allowfullscreen','');
     iframe.setAttribute('referrerpolicy','strict-origin-when-cross-origin');
     iframe.style.cssText='width:100%;height:100%;border:0;display:block;background:#000';
-    iframe.addEventListener('load', () => post({event:'listening', id:'rozza', channel:'widget'}));
+    iframe.addEventListener('load', () => { ROZZADebug.yt('IFRAME LOADED id='+id); post({event:'listening', id:'rozza', channel:'widget'}); });
     iframe.src = 'https://www.youtube-nocookie.com/embed/'+id+'?enablejsapi=1&playsinline=1&rel=0&modestbranding=1&iv_load_policy=3&autoplay='+(autoplay?1:0)+'&origin='+enc(location.origin);
     host.appendChild(iframe);
+    ROZZADebug.yt('IFRAME CREATED id='+id+' autoplay='+autoplay);
   }
   return {
     get state(){ return state; }, get time(){ return time; }, get dur(){ return dur; },
     get ready(){ return ready; }, get requestedVol(){ return vol; }, get reportedVol(){ return reportedVol; },
     get healthy(){ return healthy; }, get mounted(){ return !!iframe; }, get wantPlay(){ return wantPlay; },
     get playing(){ return state===1 || state===3; }, get loadAge(){ return Date.now()-loadStartedAt; },
+    get lastExplicitPauseAt(){ return lastExplicitPauseAt; }, get lastPlayRequestAt(){ return lastPlayRequestAt; },
+    get lastPlayingAt(){ return lastPlayingAt; }, get startupRecoveryCount(){ return startupRecoveryCount; },
+    get videoId(){ return currentId; }, get lastRecoveryReason(){ return lastRecoveryReason; },
+    get isSeeking(){ return Date.now() < seekingUntil; },
     load(id, autoplay=true){
       attachMsg();
       currentId=id; wantPlay=autoplay; ready=false; healthy=false; state=-1; time=0; dur=0; loadStartedAt=Date.now();
+      lastPlayRequestAt=autoplay?loadStartedAt:0; lastExplicitPauseAt=0; lastPlayingAt=0; startupRecoveryCount=0;
+      seekingUntil=0; lastRecoveryReason=null;
+      clearTimeout(recoveryT);
+      ForegroundRecovery.onLoadOrStop();
+      ROZZADebug.yt('LOAD id='+id+' autoplay='+autoplay);
       buildIframe(id, autoplay);   // created in the caller's stack → in-gesture on a tap
       poll();
       clearTimeout(failT);
       failT = setTimeout(()=>{ if(!healthy) Coordinator.onYTFailed('silent'); }, 14000);
     },
-    play(){ wantPlay=true; if(ready) cmd('playVideo',[]); else if(currentId) buildIframe(currentId, true); },
+    play(){
+      wantPlay=true; lastPlayRequestAt=Date.now();
+      ROZZADebug.yt('CMD PLAY reason=explicit-play wantPlay=true');
+      if(ready) cmd('playVideo',[]); else if(currentId) buildIframe(currentId, true);
+    },
+    // `reason` distinguishes a real user/system pause from internal callers —
+    // every pause, whoever asks for it, is intentional and final until play()
+    // is called again. This is the only thing that may set wantPlay=false.
     pause(reason='ROZZA YouTube control'){
-      console.log('YouTube pause requested by:', reason);
-      wantPlay=false;
+      wantPlay=false; lastExplicitPauseAt=Date.now();
+      ROZZADebug.yt('CMD PAUSE reason='+reason+' wantPlay=false');
       if(ready) cmd('pauseVideo',[]);
     },
-    seek(t){ cmd('seekTo',[t,true]); },
+    seek(t){
+      // Some players report a brief PAUSED/BUFFERING blip around a seek.
+      // That is not an unexpected pause — suppress recovery eligibility for
+      // a short window rather than teaching the recovery logic about seeks.
+      seekingUntil = Date.now() + 1500;
+      cmd('seekTo',[t,true]);
+    },
     setVol(v){
       vol = Math.round(clamp(v,0,1)*100);
-      console.log('[ROZZA DJ] YouTube requested volume:',vol,'ready:',ready);
+      if(DEBUG) console.log('[ROZZA DJ] YouTube requested volume:',vol,'ready:',ready);
       if(!ready) return;
       if(vol===0) cmd('mute',[]); else { cmd('unMute',[]); cmd('setVolume',[vol]); }
-      console.log('[ROZZA DJ] YouTube setVolume applied:',vol);
     },
-    unload(){ ready=false; healthy=false; state=-1; wantPlay=false; currentId=null; stopPoll(); clearTimeout(failT); const host=hostEl(); if(host) host.innerHTML=''; iframe=null; }
+    unload(){
+      ready=false; healthy=false; state=-1; wantPlay=false; currentId=null;
+      stopPoll(); clearTimeout(failT); clearTimeout(recoveryT);
+      ForegroundRecovery.onLoadOrStop();
+      const host=hostEl(); if(host) host.innerHTML=''; iframe=null;
+    },
+    /**
+     * Called only from Coordinator.onYTState(2). Fires playVideo again and
+     * records the attempt; never called more than YT_MAX_STARTUP_RECOVERIES
+     * times per load — this is the narrow "never really started" category.
+     */
+    attemptStartupRecovery(){
+      startupRecoveryCount++;
+      lastRecoveryReason='startup';
+      ROZZADebug.yt('RECOVERY PLAY attempt='+startupRecoveryCount);
+      recoveryT = setTimeout(()=>{ if(wantPlay && ready) cmd('playVideo',[]); }, 350);
+    },
+    /**
+     * The second category: was confirmed playing, then stopped unexpectedly
+     * while still in the foreground with no explicit pause, no interruption,
+     * no track switch and no seek in progress. Budget and reset-after-stable
+     * are owned by ForegroundRecovery, not by a per-load counter — this can
+     * legitimately fire more than once across a long listening session.
+     */
+    attemptForegroundRecovery(){
+      ForegroundRecovery.record();
+      lastRecoveryReason='foreground';
+      ROZZADebug.yt('RECOVERY PLAY attempt='+ForegroundRecovery.count());
+      recoveryT = setTimeout(()=>{ if(wantPlay && ready) cmd('playVideo',[]); }, 400);
+    },
+    markPlaying(){ lastPlayingAt=Date.now(); ForegroundRecovery.onPlayingConfirmed(); }
   };
 })();
+
+/**
+ * Bounds the "unexpectedForegroundPause" category so it can never become a
+ * standing retry loop: at most YT_MAX_FOREGROUND_RECOVERIES attempts inside
+ * any rolling YT_FOREGROUND_WINDOW_MS window. The budget replenishes on its
+ * own once playback has been genuinely stable for a while — a listener who
+ * hits a rough patch early on is not permanently denied recovery for the
+ * rest of a long session.
+ */
+const YT_FOREGROUND_WINDOW_MS = 30000;
+const YT_MAX_FOREGROUND_RECOVERIES = 3;
+const YT_FOREGROUND_STABLE_MS = 8000;
+const ForegroundRecovery = (() => {
+  let attempts = [];
+  let stableT = null;
+  function prune(){ const cutoff = Date.now() - YT_FOREGROUND_WINDOW_MS; attempts = attempts.filter(t => t > cutoff); }
+  return {
+    hasBudget(){ prune(); return attempts.length < YT_MAX_FOREGROUND_RECOVERIES; },
+    record(){ prune(); attempts.push(Date.now()); clearTimeout(stableT); },
+    count(){ prune(); return attempts.length; },
+    onPlayingConfirmed(){
+      clearTimeout(stableT);
+      stableT = setTimeout(()=>{ attempts = []; }, YT_FOREGROUND_STABLE_MS);
+    },
+    onLoadOrStop(){ clearTimeout(stableT); attempts = []; }
+  };
+})();
+
+/** True only while a real AVAudioSession interruption is in progress, per the
+ * native bridge below. A PAUSED that arrives during one is never "unexpected"
+ * — ROZZA is not meant to fight an actual phone call or Siri. */
+let ROZZAInterruptionActive = false;
+
+/** Foreground/visibility, combined from the DOM's own signal and the native
+ * app-lifecycle bridge, since a WKWebView's document can report visible even
+ * while the app itself is backgrounded. */
+let ROZZAAppForeground = true;
 
 // IFrame Player API facade. Swift calls player.setVolume/getVolume on this
 // persistent page; the underlying commands stay inside the official embed.
@@ -1147,7 +1315,11 @@ function setActiveSource(next, track){
 
 /* ---------------- COORDINATOR ---------------- */
 const Coordinator = {
-  _autoT:null, _ytT:null,
+  _autoT:null, _ytT:null, _switchT:null,
+  // True for a short window while a new track is loading. A PAUSED that
+  // arrives while this is true is ambiguous — possibly about the track being
+  // replaced — so it is never treated as an unexpected-foreground pause.
+  isSwitchingTrack:false,
   playIndex(i, autoplay=true){
     const it = Q.items[i]; if(!it) return;
     if(it.source==='local' && (it.needsReimport || !it.url)){
@@ -1156,7 +1328,9 @@ const Coordinator = {
     }
     Q.idx = i; current = it; it.unavailable = false;
     setNeedsTap(false);
-    clearTimeout(this._autoT); clearTimeout(this._ytT);
+    clearTimeout(this._autoT); clearTimeout(this._ytT); clearTimeout(this._switchT);
+    this.isSwitchingTrack = true;
+    this._switchT = setTimeout(()=>{ this.isSwitchingTrack = false; }, 1500);
     if(it.source==='youtube'){
       // Previously raced a Piped-mirror lookup for an extracted googlevideo.com
       // URL and fed it straight into the raw Audio element, falling back to the
@@ -1191,7 +1365,7 @@ const Coordinator = {
     if(!current){ if(Q.items.length) this.playIndex(0); return; }
     if(current.source==='youtube'){
       setNeedsTap(false);
-      if(YT.playing) YT.pause(); else YT.play();
+      if(YT.playing) YT.pause('user'); else YT.play();
     } else {
       if(Audio.playing) Audio.pause(); else Audio.play().catch(()=>{});
     }
@@ -1219,15 +1393,74 @@ const Coordinator = {
     this._autoT = setTimeout(()=> this.next(true), 1100);
   },
   onYTState(s){
-    if(DEBUG) console.log('[ROZZA YT] '+({'-1':'UNSTARTED',0:'ENDED',1:'PLAYING',2:'PAUSED',3:'BUFFERING',5:'CUED'}[s] ?? ('STATE_'+s)));
-    if(s===1){ PlaybackState.set({status:'playing'}); UI.onPlayState(true); setNeedsTap(false); clearTimeout(this._ytT); clearTimeout(this._autoT); }
+    const label = {'-1':'UNSTARTED',0:'ENDED',1:'PLAYING',2:'PAUSED',3:'BUFFERING',5:'CUED'}[s] ?? ('STATE_'+s);
+    if(s===2) ROZZADebug.yt('STATE '+label+' wantPlay='+YT.wantPlay+' foreground='+ROZZAAppForeground);
+    else ROZZADebug.yt('STATE '+label+' t='+YT.time.toFixed(1)+' wantPlay='+YT.wantPlay);
+
+    if(s===1){
+      YT.markPlaying();
+      PlaybackState.set({status:'playing'}); UI.onPlayState(true); setNeedsTap(false);
+      clearTimeout(this._ytT); clearTimeout(this._autoT);
+    }
     else if(s===2){
-      // A reported pause is real — either the listener's own tap on
-      // YouTube's visible native controls, or iOS suspending the embed.
-      // Forcing it back to "playing" would fight the listener's own action in
-      // the first case, and is exactly the "keep the iframe going through a
-      // lock/background pause" hack this project does not attempt in the
-      // second. Reflect the real state instead of overriding it.
+      // Two independent, narrow recovery categories — never a standing
+      // fight against a real pause. A PAUSED that follows an explicit
+      // pause() call is always accepted immediately, in both categories:
+      // that is the only thing that ever sets wantPlay=false, so its
+      // presence since the last play request is the one signal that means
+      // "this was requested," not "this is a glitch."
+      const noExplicitPauseSinceLastPlay = YT.lastExplicitPauseAt < YT.lastPlayRequestAt;
+
+      if(!noExplicitPauseSinceLastPlay){
+        ROZZADebug.yt('INTENTIONAL PAUSE — no recovery');
+        PlaybackState.set({status:'paused'});
+        UI.onPlayState(false);
+        return;
+      }
+
+      // Category 1 — startup: never yet confirmed playing for this load.
+      // Tight window, hard cap of YT_MAX_STARTUP_RECOVERIES per load, no
+      // reset — a track either gets going or it doesn't.
+      const neverConfirmedPlayingThisLoad = !YT.lastPlayingAt;
+      const withinStartupWindow = (Date.now() - YT.lastPlayRequestAt) < YT_STARTUP_WINDOW_MS;
+      const startupEligible = YT.wantPlay && neverConfirmedPlayingThisLoad && withinStartupWindow
+        && YT.startupRecoveryCount < YT_MAX_STARTUP_RECOVERIES;
+
+      if(startupEligible){
+        ROZZADebug.yt('UNEXPECTED STARTUP PAUSE t='+YT.time.toFixed(1)+' recoveryCount='+YT.startupRecoveryCount);
+        PlaybackState.set({status:'buffering'}); // not a real pause yet — still trying
+        YT.attemptStartupRecovery();
+        return;
+      }
+
+      // Category 2 — foreground: was confirmed playing at some point during
+      // this load, then stopped unexpectedly while ROZZA still wants it
+      // playing. This is the pattern from the actual bug report — audio
+      // starts fine, then dies later while the app is still open. Every
+      // guard here has to hold, or the pause is accepted as real:
+      //   - still foreground (never fights a backgrounded/locked pause)
+      //   - no AVAudioSession interruption in progress
+      //   - not in the middle of switching to a different track
+      //   - not in the middle of a seek
+      //   - was genuinely confirmed playing before (not still starting up)
+      //   - rolling-window budget has room left
+      const foregroundEligible = YT.wantPlay
+        && !!YT.lastPlayingAt
+        && ROZZAAppForeground
+        && !ROZZAInterruptionActive
+        && !this.isSwitchingTrack
+        && !YT.isSeeking
+        && ForegroundRecovery.hasBudget();
+
+      if(foregroundEligible){
+        ROZZADebug.yt('UNEXPECTED FOREGROUND PAUSE t='+YT.time.toFixed(1)+' recoveryCount='+ForegroundRecovery.count());
+        PlaybackState.set({status:'buffering'});
+        YT.attemptForegroundRecovery();
+        return;
+      }
+
+      // Every guard failed to clear recovery, or the budget is spent — this
+      // pause is real. Reflect it; do not override it.
       PlaybackState.set({status:'paused'});
       UI.onPlayState(false);
     }
@@ -1236,7 +1469,7 @@ const Coordinator = {
   },
   onYTFailed(code){
     if(!current || current.source!=='youtube') return;
-    if(DEBUG) console.log('[ROZZA YT] ERROR('+code+')');
+    ROZZADebug.yt('FAILED code='+code+' id='+(current.videoId||current.id));
     current.unavailable = true; setNeedsTap(false); clearTimeout(this._ytT);
     PlaybackState.set({status:'error'});
     YT.unload(); npVideoFallback();
@@ -1277,15 +1510,34 @@ window.ROZZANativeControls = {
     const t=(current.source==='youtube'?YT.time:Audio.time)+delta;
     Coordinator.seek(Math.max(0,t));
   },
-  background(){ if(DEBUG) console.log('[ROZZA PLAYER] native reported: app background'); },
-  foreground(){ if(DEBUG) console.log('[ROZZA PLAYER] native reported: app foreground'); }
-};
-document.addEventListener('visibilitychange', () => {
-  if (document.hidden && YT.wantPlay) {
-    console.log('[ROZZA YT] Document hidden — forcing YouTube background play');
-    YT.play();
-    activateNativeAudioSession();
+  background(){
+    ROZZAAppForeground = false;
+    if(DEBUG) console.log('[ROZZA PLAYER] native reported: app background');
+  },
+  foreground(){
+    ROZZAAppForeground = true;
+    if(DEBUG) console.log('[ROZZA PLAYER] native reported: app foreground');
+  },
+  // Bridged from DJPlaybackController.handleInterruption. While a real
+  // AVAudioSession interruption (phone call, Siri, another app) is active,
+  // a PAUSED report is never "unexpected" — recovery must not fight it.
+  interruptionBegan(){
+    ROZZAInterruptionActive = true;
+    ROZZADebug.native('interruption began');
+  },
+  interruptionEnded(){
+    ROZZAInterruptionActive = false;
+    ROZZADebug.native('interruption ended');
   }
+};
+// Observe only — do not act. This used to call YT.play() to force the embed
+// back on when the document went hidden, which is exactly the "defeat
+// YouTube/WebKit visibility behavior" hack this build does not attempt.
+// Foreground stability first; background/lock-screen YouTube behavior is a
+// separate, later problem, not something to paper over here.
+document.addEventListener('visibilitychange', () => {
+  ROZZAAppForeground = !document.hidden;
+  ROZZADebug.yt('document.visibilityState='+document.visibilityState+' document.hidden='+document.hidden);
 });
 function setNeedsTap(on){ const b=$('#npPlayBtn'); if(b) b.classList.toggle('needs-tap', !!on); }
 
@@ -1297,8 +1549,12 @@ function mediaSession(){
       artwork: [{ src: current.thumbnailURL || FALLBACK_ART, sizes:'480x360', type:'image/png' }]
     });
     const M = navigator.mediaSession;
-    M.setActionHandler('play', () => Coordinator.toggle());
-    M.setActionHandler('pause', () => Coordinator.toggle());
+    // PLAY must explicitly play and PAUSE must explicitly pause — never
+    // toggle. A stale-state toggle here would issue the exact opposite of
+    // what was requested. window.ROZZANativeControls.play()/.pause() are
+    // the same explicit methods the native Lock Screen commands call.
+    M.setActionHandler('play', () => window.ROZZANativeControls.play());
+    M.setActionHandler('pause', () => window.ROZZANativeControls.pause());
     M.setActionHandler('nexttrack', () => Coordinator.next(false));
     M.setActionHandler('previoustrack', () => Coordinator.prev());
     M.setActionHandler('seekto', d => { if(d.seekTime!=null) Coordinator.seek(d.seekTime); });

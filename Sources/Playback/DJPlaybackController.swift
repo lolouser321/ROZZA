@@ -27,6 +27,7 @@ final class DJPlaybackController: NSObject, ObservableObject {
     private var latestYouTubeVolume: Float = 0.707
     private var wasYouTubeReady = false
     private var resumeAVAfterInterruption = false
+    private var resumeYouTubeAfterInterruption = false
     private var statusTimer: Timer?
     private var observers: [NSObjectProtocol] = []
 
@@ -98,6 +99,7 @@ final class DJPlaybackController: NSObject, ObservableObject {
     }
 
     func playYouTube() {
+        print("[ROZZA NATIVE] playYouTube()")
         evaluateYouTube("""
         if (window.player && typeof window.player.playVideo === 'function') {
             window.player.playVideo();
@@ -106,7 +108,7 @@ final class DJPlaybackController: NSObject, ObservableObject {
     }
 
     func pauseYouTube(reason: String = "Deck A Pause button") {
-        print("YouTube pause requested by:", reason)
+        print("[ROZZA NATIVE] pauseYouTube reason:", reason)
         evaluateYouTube("""
         if (window.player && typeof window.player.pauseVideo === 'function') {
             window.player.pauseVideo();
@@ -261,11 +263,24 @@ final class DJPlaybackController: NSObject, ObservableObject {
         observers.append(center.addObserver(forName: AVAudioSession.silenceSecondaryAudioHintNotification, object: nil, queue: .main) { [weak self] note in
             Task { @MainActor in self?.handleSilenceHint(note) }
         })
+        // Reactivating the session on backgrounding is legitimate — real audio
+        // sources (AVPlayer, local files) depend on it. Forcing YouTube to
+        // resume here does not: that line used to call window.YT.play()
+        // unconditionally on every backgrounding, which is the "defeat
+        // YouTube/WebKit visibility behavior" hack this build does not
+        // attempt. Foreground stability first; background/lock-screen
+        // YouTube behavior is a separate, later problem.
         observers.append(center.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { [weak self] _ in
+            print("[ROZZA NATIVE] App background")
             Task { @MainActor in
                 try? ROZZAAudioSession.shared.configureAndActivateIfNeeded()
-                self?.evaluateYouTube("if(window.YT && window.YT.wantPlay) { window.YT.play(); }")
             }
+        })
+        observers.append(center.addObserver(forName: UIApplication.willEnterForegroundNotification, object: nil, queue: .main) { _ in
+            print("[ROZZA NATIVE] App foreground")
+        })
+        observers.append(center.addObserver(forName: UIApplication.willResignActiveNotification, object: nil, queue: .main) { _ in
+            print("[ROZZA NATIVE] App inactive")
         })
     }
 
@@ -273,16 +288,37 @@ final class DJPlaybackController: NSObject, ObservableObject {
         guard let rawType = notification.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
               let type = AVAudioSession.InterruptionType(rawValue: rawType) else { return }
         if type == .began {
+            print("[ROZZA NATIVE] Interruption began")
+            // Told to JS first, before anything is paused: a PAUSED that
+            // arrives while a real interruption is active must never be
+            // read as "unexpected" and fought with a recovery attempt.
+            evaluateYouTube("if(window.ROZZANativeControls) window.ROZZANativeControls.interruptionBegan();")
             ROZZAAudioSession.shared.markInterrupted()
             resumeAVAfterInterruption = avPlayer.timeControlStatus == .playing
+            // Captured before pausing — YouTube's own isYouTubePlaying already
+            // reflects rozza2.html's real state via the nowPlaying bridge, not
+            // a guess.
+            resumeYouTubeAfterInterruption = isYouTubePlaying
             pauseAVPlayer(reason: "iOS audio interruption began")
             pauseYouTube(reason: "iOS audio interruption began")
         } else {
+            let rawOptions = notification.userInfo?[AVAudioSessionInterruptionOptionKey] as? UInt ?? 0
+            let shouldResume = AVAudioSession.InterruptionOptions(rawValue: rawOptions).contains(.shouldResume)
+            print("[ROZZA NATIVE] Interruption ended shouldResume=\(shouldResume) resumeAV=\(resumeAVAfterInterruption) resumeYouTube=\(resumeYouTubeAfterInterruption)")
+            // Cleared before any resume is attempted, so a hiccup on resume is
+            // free to be classified as a genuine unexpectedForegroundPause
+            // rather than being permanently attributed to the interruption.
+            evaluateYouTube("if(window.ROZZANativeControls) window.ROZZANativeControls.interruptionEnded();")
             do { try ROZZAAudioSession.shared.reactivateAfterInterruption() }
             catch { lastError = "Audio session reactivation failed: \(error.localizedDescription)" }
-            let rawOptions = notification.userInfo?[AVAudioSessionInterruptionOptionKey] as? UInt ?? 0
-            if AVAudioSession.InterruptionOptions(rawValue: rawOptions).contains(.shouldResume), resumeAVAfterInterruption {
+            guard shouldResume else { return }
+            if resumeAVAfterInterruption {
                 avPlayer.play()
+            }
+            // Only restore YouTube if it was genuinely playing before the
+            // interruption — never as an unconditional force-resume.
+            if resumeYouTubeAfterInterruption {
+                playYouTube()
             }
         }
     }
@@ -333,11 +369,16 @@ final class DJPlaybackController: NSObject, ObservableObject {
     private func configureRemoteCommands() {
         let center = MPRemoteCommandCenter.shared()
 
+        // PLAY must explicitly play; PAUSE must explicitly pause. Both used to
+        // call Coordinator.toggle() — if native and JS state disagreed even
+        // briefly, "Play" could issue a pause and vice versa. Only the actual
+        // togglePlayPauseCommand below uses toggle semantics.
         center.playCommand.isEnabled = true
         center.playCommand.addTarget { [weak self] _ in
+            print("[ROZZA NATIVE] Remote command: play")
             Task { @MainActor in
                 self?.configureAudioSession()
-                self?.evaluateYouTube("if(window.Coordinator && typeof window.Coordinator.toggle === 'function') { window.Coordinator.toggle(); } else if(window.player && typeof window.player.playVideo === 'function') { window.player.playVideo(); }")
+                self?.evaluateYouTube("if(window.ROZZANativeControls) { window.ROZZANativeControls.play(); }")
                 if self?.avPlayer.currentItem != nil { self?.playAVPlayer() }
             }
             return .success
@@ -345,8 +386,9 @@ final class DJPlaybackController: NSObject, ObservableObject {
 
         center.pauseCommand.isEnabled = true
         center.pauseCommand.addTarget { [weak self] _ in
+            print("[ROZZA NATIVE] Remote command: pause")
             Task { @MainActor in
-                self?.evaluateYouTube("if(window.Coordinator && typeof window.Coordinator.toggle === 'function') { window.Coordinator.toggle(); } else if(window.player && typeof window.player.pauseVideo === 'function') { window.player.pauseVideo(); }")
+                self?.evaluateYouTube("if(window.ROZZANativeControls) { window.ROZZANativeControls.pause(); }")
                 self?.pauseAVPlayer(reason: "Lockscreen pause")
             }
             return .success
@@ -354,6 +396,7 @@ final class DJPlaybackController: NSObject, ObservableObject {
 
         center.togglePlayPauseCommand.isEnabled = true
         center.togglePlayPauseCommand.addTarget { [weak self] _ in
+            print("[ROZZA NATIVE] Remote command: togglePlayPause")
             Task { @MainActor in
                 self?.configureAudioSession()
                 self?.evaluateYouTube("if(window.Coordinator && typeof window.Coordinator.toggle === 'function') { window.Coordinator.toggle(); }")
@@ -368,6 +411,7 @@ final class DJPlaybackController: NSObject, ObservableObject {
 
         center.nextTrackCommand.isEnabled = true
         center.nextTrackCommand.addTarget { [weak self] _ in
+            print("[ROZZA NATIVE] Remote command: next")
             Task { @MainActor in
                 self?.evaluateYouTube("if(window.Coordinator && typeof window.Coordinator.next === 'function') window.Coordinator.next(false);")
             }
@@ -376,6 +420,7 @@ final class DJPlaybackController: NSObject, ObservableObject {
 
         center.previousTrackCommand.isEnabled = true
         center.previousTrackCommand.addTarget { [weak self] _ in
+            print("[ROZZA NATIVE] Remote command: previous")
             Task { @MainActor in
                 self?.evaluateYouTube("if(window.Coordinator && typeof window.Coordinator.prev === 'function') window.Coordinator.prev();")
             }

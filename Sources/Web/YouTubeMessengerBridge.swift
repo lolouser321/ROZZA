@@ -3,9 +3,21 @@ import WebKit
 
 /// Installs the bundled YouTube video-event messenger into YouTube frames.
 ///
-/// The JavaScript resource is kept as a separate, inspectable build resource.
-/// Runtime scoping prevents YouTube-specific DOM hooks from changing ROZZA's
-/// own document while still allowing the hooks to run in WKWebView subframes.
+/// **Currently not called anywhere.** `ROZZAWebAppView.makeUIView` no longer
+/// calls `install(in:handler:)`. This ran directly inside the YouTube
+/// embed's own execution context — reading and mutating its `<video>`
+/// element, forcing `muted`/`autoplay`, polling every 100ms, and overriding
+/// `document.hidden`/`visibilitychange` — as a second, uncoordinated control
+/// system alongside `rozza2.html`'s own compliant postMessage-based `YT`
+/// object. That was the root cause of YouTube audio stopping shortly after
+/// starting, in the foreground, with the app fully active.
+///
+/// The file (and this wrapper) are kept for reference rather than deleted.
+/// `rozza2.html`'s `YT` object is the single source of truth for YouTube
+/// playback; nothing native should touch the embed's content. If a
+/// genuinely minimal, **read-only** observation bridge is ever needed again,
+/// it must not: override visibility/focus APIs, force muted/autoplay,
+/// mutate the video element, call play/pause on its own initiative, or poll.
 enum YouTubeMessengerBridge {
     static let handlerName = "callbackHandler"
 

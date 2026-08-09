@@ -19,7 +19,29 @@ struct ROZZAWebAppView: UIViewRepresentable {
         configuration.defaultWebpagePreferences.allowsContentJavaScript = true
         configuration.userContentController.add(context.coordinator, name: "audioSession")
         configuration.userContentController.add(context.coordinator, name: "nowPlaying")
-        YouTubeMessengerBridge.install(in: configuration, handler: context.coordinator)
+        // YouTubeMessengerBridge.install(...) is intentionally NOT called.
+        //
+        // It injected yt_video_play_messenger.js directly into the YouTube
+        // iframe, where it read/mutated the embed's own <video> element
+        // (forcing .muted, .autoplay, re-attaching play/pause listeners via
+        // MutationObserver, polling every 100ms) and overrode
+        // document.hidden/visibilitychange so the embed wouldn't react to
+        // being backgrounded — a second, uncoordinated control system fighting
+        // rozza2.html's own compliant postMessage-based YT controller over the
+        // same player. That is the root cause of YouTube audio stopping a
+        // moment after starting, even in the foreground.
+        //
+        // No replacement bridge is installed because none is needed: the
+        // "audioSession" and "nowPlaying" handlers above already receive
+        // everything from the official channel — isPlaying, elapsed time,
+        // duration, title, artist — via rozza2.html's own
+        // postNowPlayingToNative()/activateNativeAudioSession(), which fire on
+        // every real state transition. rozza2.html's YT object is the single
+        // source of truth for YouTube playback; nothing native touches the
+        // iframe's content.
+        //
+        // The JS resource file itself is left in place for reference, per
+        // instruction — see Sources/Web/YouTubeMessengerBridge.swift.
 
         let webView = WKWebView(frame: .zero, configuration: configuration)
         webView.navigationDelegate = context.coordinator
@@ -52,10 +74,12 @@ struct ROZZAWebAppView: UIViewRepresentable {
                 if action == "activate" { activateAudioSession() }
             } else if message.name == "nowPlaying", let dict = message.body as? [String: Any] {
                 dj?.updateNowPlaying(info: dict)
-            } else if message.name == YouTubeMessengerBridge.handlerName,
-                      let payload = message.body as? [String: Any] {
-                dj?.handleYouTubeMessengerEvent(payload)
             }
+            // No case for YouTubeMessengerBridge.handlerName ("callbackHandler"):
+            // that script is no longer injected (see makeUIView above), so
+            // nothing ever posts to this channel. dj.handleYouTubeMessengerEvent
+            // is unreachable dead code, kept only in case a minimal, read-only
+            // bridge is deliberately reintroduced later.
         }
 
         private func activateAudioSession() {

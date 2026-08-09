@@ -38,7 +38,16 @@ final class ROZZAAudioSession {
             do {
                 try session.setActive(true, options: [])
                 active = true
-                SilentAudioPlayer.shared.play()
+                // SilentAudioPlayer.shared.play() removed from this path.
+                // A near-silent infinite AVAudioPlayer loop was started on
+                // every session activation, including for YouTube — but real
+                // audio sources (AVPlayer, local files) generate real audio
+                // and need no keepalive, and YouTube's embed is foreground-
+                // only for now, so nothing in the current playback path needs
+                // a second audio player running underneath it. If background
+                // YouTube is tackled later and something like this proves
+                // genuinely necessary, reintroduce it deliberately then, not
+                // as a leftover from an earlier workaround attempt.
                 print("[ROZZA AudioSession] OK setActive(true)")
             } catch {
                 logFailure(api: "setActive(true, options: [])", error: error)
