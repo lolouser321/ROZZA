@@ -78,7 +78,29 @@
   installConditionalDocumentProperty('visibilityState', visibilityDescriptor, 'visible', 'visible');
   if (webkitHiddenDescriptor) installConditionalDocumentProperty('webkitHidden', webkitHiddenDescriptor, false, false);
 
+  function armFromFirstLifecycleEvent(event) {
+    // Intent is synchronized while ROZZA is still foregrounded. Because this
+    // script is injected at document start, its capture listener sees the
+    // first iOS blur/visibility event before normal YouTube page handlers.
+    // Arm *at that boundary* so the page never gets a chance to interpret the
+    // transition as an instruction to pause. No foreground video polling or
+    // second playback state machine is introduced.
+    if (enabled || !shouldPlay) return;
+    enabled = true;
+    startObserver();
+    const video = scanVideo();
+    emit('BackgroundBridgeAutoArmed', {
+      reason: event?.type || 'lifecycle',
+      paused: video ? !!video.paused : null,
+      currentTime: video?.currentTime || 0
+    });
+    if (video && video.paused) {
+      setTimeout(() => recover(video, 'first-lifecycle-event'), 0);
+    }
+  }
+
   function suppressLifecycleEvent(event) {
+    if (!enabled && shouldPlay) armFromFirstLifecycleEvent(event);
     if (!enabled) return;
     try {
       event.stopImmediatePropagation();
@@ -86,9 +108,11 @@
     } catch (_) {}
   }
 
-  // Capture-phase listeners are always present but completely inert in normal
-  // foreground playback. This is what keeps the old Pure Tube lifecycle trick
-  // from becoming a second foreground controller again.
+  // Capture-phase listeners are always present but completely inert during
+  // ordinary foreground playback. `shouldPlay` is only intent metadata. The
+  // bridge arms itself at the first actual lifecycle boundary, eliminating
+  // the cross-frame/native-callback race that previously left one PAUSE for
+  // the user to clear manually from Control Center.
   document.addEventListener('visibilitychange', suppressLifecycleEvent, true);
   document.addEventListener('webkitvisibilitychange', suppressLifecycleEvent, true);
   window.addEventListener('blur', suppressLifecycleEvent, true);
@@ -198,7 +222,13 @@
   window.addEventListener('message', event => {
     let data = event.data;
     try { if (typeof data === 'string') data = JSON.parse(data); } catch (_) { return; }
-    if (!data || data.event !== 'ROZZA_BACKGROUND_MODE') return;
+    if (!data) return;
+    if (data.event === 'ROZZA_BACKGROUND_INTENT') {
+      shouldPlay = !!data.shouldPlay;
+      emit('BackgroundIntent', { shouldPlay, reason: data.reason || 'intent-sync' });
+      return;
+    }
+    if (data.event !== 'ROZZA_BACKGROUND_MODE') return;
     setMode(data.enabled, data.shouldPlay, data.reason);
   }, true);
 

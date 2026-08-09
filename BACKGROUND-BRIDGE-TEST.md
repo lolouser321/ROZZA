@@ -23,3 +23,10 @@ This branch keeps the ROZZA 1.8/9 foreground YouTube state machine intact and ad
 6. Test a phone/Siri/audio interruption and confirm the bridge does not fight the interruption.
 
 If background audio still stops, capture Xcode logs containing `BackgroundBridge...` plus `window.ROZZADebug.getState()` after reopening ROZZA.
+
+
+## 1.10 build 11: automatic Home/Lock transition
+- Synchronizes Play/Pause intent into the iframe before backgrounding.
+- Background bridge auto-arms on the first capture-phase blur/visibility event.
+- Adds one 180 ms single-shot `YT.play()` fallback after `didEnterBackground` only when Play intent is still true.
+- No permanent polling/retry loop; explicit Pause remains authoritative.
