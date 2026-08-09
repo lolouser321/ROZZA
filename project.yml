@@ -6,8 +6,8 @@ options:
 settings:
   base:
     SWIFT_VERSION: 5.10
-    MARKETING_VERSION: 1.8
-    CURRENT_PROJECT_VERSION: 9
+    MARKETING_VERSION: 1.9
+    CURRENT_PROJECT_VERSION: 10
 targets:
   ROZZA:
     type: application
@@ -21,6 +21,8 @@ targets:
       - path: rozza2.html
         buildPhase: resources
       - path: Resources/yt_video_play_messenger.js
+        buildPhase: resources
+      - path: Resources/yt_background_bridge.js
         buildPhase: resources
     entitlements:
       path: Resources/ROZZA.entitlements

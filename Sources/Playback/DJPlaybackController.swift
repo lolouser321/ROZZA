@@ -263,24 +263,39 @@ final class DJPlaybackController: NSObject, ObservableObject {
         observers.append(center.addObserver(forName: AVAudioSession.silenceSecondaryAudioHintNotification, object: nil, queue: .main) { [weak self] note in
             Task { @MainActor in self?.handleSilenceHint(note) }
         })
-        // Reactivating the session on backgrounding is legitimate — real audio
-        // sources (AVPlayer, local files) depend on it. Forcing YouTube to
-        // resume here does not: that line used to call window.YT.play()
-        // unconditionally on every backgrounding, which is the "defeat
-        // YouTube/WebKit visibility behavior" hack this build does not
-        // attempt. Foreground stability first; background/lock-screen
-        // YouTube behavior is a separate, later problem.
+        // Arm the background-only iframe bridge BEFORE WebKit receives its
+        // normal hidden/blur transition. The bridge is inert in foreground
+        // and never becomes a second foreground playback controller.
+        observers.append(center.addObserver(forName: UIApplication.willResignActiveNotification, object: nil, queue: .main) { [weak self] _ in
+            print("[ROZZA NATIVE] App inactive — preparing background bridge")
+            Task { @MainActor in
+                guard let self else { return }
+                try? ROZZAAudioSession.shared.configureAndActivateIfNeeded()
+                self.evaluateYouTube("if(window.ROZZANativeControls) window.ROZZANativeControls.backgroundPrepare();")
+            }
+        })
         observers.append(center.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { [weak self] _ in
             print("[ROZZA NATIVE] App background")
             Task { @MainActor in
+                guard let self else { return }
                 try? ROZZAAudioSession.shared.configureAndActivateIfNeeded()
+                self.evaluateYouTube("if(window.ROZZANativeControls) window.ROZZANativeControls.background();")
             }
         })
-        observers.append(center.addObserver(forName: UIApplication.willEnterForegroundNotification, object: nil, queue: .main) { _ in
-            print("[ROZZA NATIVE] App foreground")
+        observers.append(center.addObserver(forName: UIApplication.willEnterForegroundNotification, object: nil, queue: .main) { [weak self] _ in
+            print("[ROZZA NATIVE] App will enter foreground")
+            Task { @MainActor in
+                self?.evaluateYouTube("if(window.ROZZANativeControls) window.ROZZANativeControls.foreground();")
+            }
         })
-        observers.append(center.addObserver(forName: UIApplication.willResignActiveNotification, object: nil, queue: .main) { _ in
-            print("[ROZZA NATIVE] App inactive")
+        // A second foreground signal is intentional: depending on when WebKit
+        // is thawed, an evaluateJavaScript issued at willEnterForeground can be
+        // delayed. didBecomeActive makes bridge teardown idempotent.
+        observers.append(center.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
+            print("[ROZZA NATIVE] App active")
+            Task { @MainActor in
+                self?.evaluateYouTube("if(window.ROZZANativeControls) window.ROZZANativeControls.foreground();")
+            }
         })
     }
 

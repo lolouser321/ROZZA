@@ -19,6 +19,11 @@ struct ROZZAWebAppView: UIViewRepresentable {
         configuration.defaultWebpagePreferences.allowsContentJavaScript = true
         configuration.userContentController.add(context.coordinator, name: "audioSession")
         configuration.userContentController.add(context.coordinator, name: "nowPlaying")
+        // Install only the new background-only bridge. It is injected into
+        // YouTube frames at document start but remains inert until the main
+        // ROZZA state machine explicitly arms it during app backgrounding.
+        // The legacy yt_video_play_messenger.js controller remains disabled.
+        YouTubeMessengerBridge.installBackgroundBridge(in: configuration, handler: context.coordinator)
         // YouTubeMessengerBridge.install(...) is intentionally NOT called.
         //
         // It injected yt_video_play_messenger.js directly into the YouTube
@@ -74,12 +79,10 @@ struct ROZZAWebAppView: UIViewRepresentable {
                 if action == "activate" { activateAudioSession() }
             } else if message.name == "nowPlaying", let dict = message.body as? [String: Any] {
                 dj?.updateNowPlaying(info: dict)
+            } else if message.name == YouTubeMessengerBridge.handlerName,
+                      let payload = message.body as? [String: Any] {
+                dj?.handleYouTubeMessengerEvent(payload)
             }
-            // No case for YouTubeMessengerBridge.handlerName ("callbackHandler"):
-            // that script is no longer injected (see makeUIView above), so
-            // nothing ever posts to this channel. dj.handleYouTubeMessengerEvent
-            // is unreachable dead code, kept only in case a minimal, read-only
-            // bridge is deliberately reintroduced later.
         }
 
         private func activateAudioSession() {

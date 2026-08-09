@@ -12,14 +12,45 @@ import WebKit
 /// object. That was the root cause of YouTube audio stopping shortly after
 /// starting, in the foreground, with the app fully active.
 ///
-/// The file (and this wrapper) are kept for reference rather than deleted.
-/// `rozza2.html`'s `YT` object is the single source of truth for YouTube
-/// playback; nothing native should touch the embed's content. If a
-/// genuinely minimal, **read-only** observation bridge is ever needed again,
-/// it must not: override visibility/focus APIs, force muted/autoplay,
-/// mutate the video element, call play/pause on its own initiative, or poll.
+/// The legacy file (and legacy installer) are kept for reference rather than
+/// deleted. `rozza2.html`'s `YT` object remains the single source of truth for
+/// foreground playback. A separate background-only bridge may be installed;
+/// it is inert in foreground and never runs the legacy 100 ms polling/player
+/// mutation loop.
 enum YouTubeMessengerBridge {
     static let handlerName = "callbackHandler"
+
+    /// Installs the minimal background-only YouTube lifecycle bridge.
+    ///
+    /// Unlike the legacy messenger, this script is inert during normal
+    /// foreground playback. It only changes visibility handling after the
+    /// main ROZZA controller explicitly arms background mode.
+    static func installBackgroundBridge(
+        in configuration: WKWebViewConfiguration,
+        handler: WKScriptMessageHandler
+    ) {
+        configuration.userContentController.add(handler, name: handlerName)
+
+        guard let resourceURL = Bundle.main.url(
+            forResource: "yt_background_bridge",
+            withExtension: "js"
+        ) else {
+            assertionFailure("yt_background_bridge.js is missing from the app bundle")
+            return
+        }
+
+        do {
+            let source = try String(contentsOf: resourceURL, encoding: .utf8)
+            let script = WKUserScript(
+                source: source,
+                injectionTime: .atDocumentStart,
+                forMainFrameOnly: false
+            )
+            configuration.userContentController.addUserScript(script)
+        } catch {
+            assertionFailure("Could not load yt_background_bridge.js: \(error)")
+        }
+    }
 
     static func install(
         in configuration: WKWebViewConfiguration,

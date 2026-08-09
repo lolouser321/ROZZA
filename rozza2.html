@@ -611,6 +611,7 @@ const ROZZADebug = (() => {
         lastExplicitPauseAt: (typeof YT !== 'undefined') ? YT.lastExplicitPauseAt : null,
         lastPlayingAt: (typeof YT !== 'undefined') ? YT.lastPlayingAt : null,
         startupRecoveryCount: (typeof YT !== 'undefined') ? YT.startupRecoveryCount : null,
+        backgroundBridgeEnabled: (typeof YT !== 'undefined') ? YT.backgroundBridgeEnabled : null,
         foregroundRecoveryCount: (typeof ForegroundRecovery !== 'undefined') ? ForegroundRecovery.count() : null,
         foregroundRecoveryBudgetRemaining: (typeof ForegroundRecovery !== 'undefined')
           ? (YT_MAX_FOREGROUND_RECOVERIES - ForegroundRecovery.count()) : null,
@@ -1070,6 +1071,7 @@ const YT_MAX_STARTUP_RECOVERIES = 2;
 const YT = (() => {
   let iframe=null, ready=false, healthy=false, state=-1, time=0, dur=0, vol=80, reportedVol=80;
   let wantPlay=false, currentId=null, loadStartedAt=0, msgAttached=false;
+  let backgroundBridgeEnabled=false;
   let pollT=null, failT=null, recoveryT=null;
   // Explicit playback intent, distinct from what the player happens to report.
   // A PAUSED event while wantPlay is true is a candidate for recovery under
@@ -1115,6 +1117,16 @@ const YT = (() => {
     }
   }
   function post(o){ try{ if(iframe && iframe.contentWindow) iframe.contentWindow.postMessage(JSON.stringify(o), 'https://www.youtube-nocookie.com'); }catch(_){} }
+  function setBackgroundBridge(enabled, shouldPlay=wantPlay, reason='native-lifecycle'){
+    backgroundBridgeEnabled = !!enabled;
+    post({
+      event:'ROZZA_BACKGROUND_MODE',
+      enabled:backgroundBridgeEnabled,
+      shouldPlay:!!shouldPlay,
+      reason:String(reason||'native-lifecycle')
+    });
+    ROZZADebug.yt('BACKGROUND BRIDGE enabled='+backgroundBridgeEnabled+' shouldPlay='+!!shouldPlay+' reason='+reason);
+  }
   function cmd(f,a){ post({event:'command', func:f, args:a||[], id:'rozza', channel:'widget'}); }
   function poll(){ stopPoll(); pollT=setInterval(()=>{ if(!ready) return; cmd('getCurrentTime',[]); cmd('getDuration',[]); cmd('getPlayerState',[]); cmd('getVolume',[]); },700); }
   function stopPoll(){ if(pollT){ clearInterval(pollT); pollT=null; } }
@@ -1139,7 +1151,8 @@ const YT = (() => {
     get lastExplicitPauseAt(){ return lastExplicitPauseAt; }, get lastPlayRequestAt(){ return lastPlayRequestAt; },
     get lastPlayingAt(){ return lastPlayingAt; }, get startupRecoveryCount(){ return startupRecoveryCount; },
     get videoId(){ return currentId; }, get lastRecoveryReason(){ return lastRecoveryReason; },
-    get isSeeking(){ return Date.now() < seekingUntil; },
+    get isSeeking(){ return Date.now() < seekingUntil; }, get backgroundBridgeEnabled(){ return backgroundBridgeEnabled; },
+    setBackgroundBridge,
     load(id, autoplay=true){
       attachMsg();
       currentId=id; wantPlay=autoplay; ready=false; healthy=false; state=-1; time=0; dur=0; loadStartedAt=Date.now();
@@ -1156,6 +1169,7 @@ const YT = (() => {
     play(){
       wantPlay=true; lastPlayRequestAt=Date.now();
       ROZZADebug.yt('CMD PLAY reason=explicit-play wantPlay=true');
+      if(backgroundBridgeEnabled) setBackgroundBridge(true, true, 'explicit-play');
       if(ready) cmd('playVideo',[]); else if(currentId) buildIframe(currentId, true);
     },
     // `reason` distinguishes a real user/system pause from internal callers —
@@ -1164,6 +1178,7 @@ const YT = (() => {
     pause(reason='ROZZA YouTube control'){
       wantPlay=false; lastExplicitPauseAt=Date.now();
       ROZZADebug.yt('CMD PAUSE reason='+reason+' wantPlay=false');
+      if(backgroundBridgeEnabled) setBackgroundBridge(true, false, 'explicit-pause');
       if(ready) cmd('pauseVideo',[]);
     },
     seek(t){
@@ -1180,6 +1195,7 @@ const YT = (() => {
       if(vol===0) cmd('mute',[]); else { cmd('unMute',[]); cmd('setVolume',[vol]); }
     },
     unload(){
+      if(backgroundBridgeEnabled) setBackgroundBridge(false, false, 'unload');
       ready=false; healthy=false; state=-1; wantPlay=false; currentId=null;
       stopPoll(); clearTimeout(failT); clearTimeout(recoveryT);
       ForegroundRecovery.onLoadOrStop();
@@ -1510,23 +1526,44 @@ window.ROZZANativeControls = {
     const t=(current.source==='youtube'?YT.time:Audio.time)+delta;
     Coordinator.seek(Math.max(0,t));
   },
+  backgroundPrepare(){
+    ROZZAAppForeground = false;
+    activateNativeAudioSession();
+    if(current && current.source==='youtube') YT.setBackgroundBridge(true, YT.wantPlay, 'willResignActive');
+    ROZZADebug.native('app background prepare');
+  },
   background(){
     ROZZAAppForeground = false;
-    if(DEBUG) console.log('[ROZZA PLAYER] native reported: app background');
+    activateNativeAudioSession();
+    if(current && current.source==='youtube') YT.setBackgroundBridge(true, YT.wantPlay, 'didEnterBackground');
+    ROZZADebug.native('app background');
   },
   foreground(){
+    if(current && current.source==='youtube') YT.setBackgroundBridge(false, false, 'foreground');
     ROZZAAppForeground = true;
-    if(DEBUG) console.log('[ROZZA PLAYER] native reported: app foreground');
+    ROZZADebug.native('app foreground');
+    // If iOS/WebKit still suspended the iframe despite the background bridge,
+    // restore the user's existing PLAY intent once on return. This is not a
+    // background retry loop and never runs after an explicit user pause.
+    if(current && current.source==='youtube' && YT.wantPlay && YT.state===2){
+      setTimeout(()=>{ if(ROZZAAppForeground && YT.wantPlay && YT.state===2) YT.play(); }, 120);
+    }
   },
   // Bridged from DJPlaybackController.handleInterruption. While a real
   // AVAudioSession interruption (phone call, Siri, another app) is active,
   // a PAUSED report is never "unexpected" — recovery must not fight it.
   interruptionBegan(){
     ROZZAInterruptionActive = true;
+    if(current && current.source==='youtube' && YT.backgroundBridgeEnabled){
+      YT.setBackgroundBridge(true, false, 'interruption-began');
+    }
     ROZZADebug.native('interruption began');
   },
   interruptionEnded(){
     ROZZAInterruptionActive = false;
+    if(!ROZZAAppForeground && current && current.source==='youtube' && YT.backgroundBridgeEnabled){
+      YT.setBackgroundBridge(true, YT.wantPlay, 'interruption-ended');
+    }
     ROZZADebug.native('interruption ended');
   }
 };
