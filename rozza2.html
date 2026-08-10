@@ -755,7 +755,7 @@ html,body{background:#050507}
             <div class="set-row"><div class="sl">Reset source cache</div><button class="text-action" id="clrMirrors">Reset</button></div>
           </div>
           <div class="settings-group"><div class="settings-label">Support</div><div class="set-row"><div><div class="sl">Playback diagnostics</div><div class="sd">Copy a private technical timeline when something fails</div></div><button class="text-action" id="copyDiagnosticsBtn">Copy</button></div></div>
-          <div class="ver">ROZZA 4.0.2 · BG HOTFIX</div>
+          <div class="ver">ROZZA 4.0.3 · SEARCH HOTFIX</div>
         </section>
       </main>
 
@@ -978,14 +978,27 @@ function tokenizeTaste(v){ return String(v||'').toLowerCase().replace(/[^a-z0-9\
 function fmtCompactMinutes(sec){ const m=Math.round((sec||0)/60); if(m<60)return m+'m'; const h=Math.floor(m/60),r=m%60; return h+'h'+(r?' '+r+'m':''); }
 
 /* ---------------- MIRROR REGISTRY + RACING ---------------- */
+// Search-source pool v3. The first group is intentionally made of
+// CORS-capable Piped instances from the current TeamPiped public-instance
+// list so iOS/WKWebView can query them directly instead of depending on
+// fragile public CORS relays. Invidious remains a fallback only.
+const MIRROR_POOL_VERSION = 3;
+const PRIMARY_PIPED = [
+  'pipedapi.syncpundit.io',
+  'api-piped.mha.fi',
+  'piped-api.garudalinux.org',
+  'pipedapi.rivo.lol',
+  'yapi.vyper.me',
+  'api.looleh.xyz',
+  'piped-api.cfe.re',
+  'pipedapi.r4fo.com',
+  'pipedapi.darkness.services'
+];
 const SEEDS = [
-  ['pipedapi.kavin.rocks','piped'],['pipedapi.leptons.xyz','piped'],['pipedapi.12a.app','piped'],
-  ['api.piped.minionflo.net','piped'],['pipedapi.nezumi.party','piped'],['pipedapi.nosebs.ru','piped'],
-  ['pipedapi.privacy.com.de','piped'],['api.piped.private.coffee','piped'],['pipedapi.adminforge.de','piped'],
-  ['pipedapi.darkness.services','piped'],['pipedapi.in.projectsegfau.lt','piped'],['api.piped.yt','piped'],
-  ['yewtu.be','invidious'],['inv.nadeko.net','invidious'],['invidious.nerdvpn.de','invidious'],
-  ['invidious.privacyredirect.com','invidious'],['iv.nboeck.de','invidious'],['invidious.protokolla.fi','invidious'],
-  ['invidious.f5.si','invidious']
+  ...PRIMARY_PIPED.map(h => [h,'piped']),
+  ['pipedapi.kavin.rocks','piped'],['pipedapi.leptons.xyz','piped'],
+  ['api.piped.private.coffee','piped'],['pipedapi.adminforge.de','piped'],['api.piped.yt','piped'],
+  ['yewtu.be','invidious'],['inv.nadeko.net','invidious'],['iv.nboeck.de','invidious']
 ];
 const REGISTRIES = [
   { url:'https://piped-instances.kavin.rocks/', k:'piped' },
@@ -1002,11 +1015,22 @@ let pool = [];
 
 function hostOf(u){ try{ return new URL(u).host; }catch(e){ return ''; } }
 function loadPool(){
-  const saved = store.get('mirrors', null);
+  // Build 22 could inherit an old, high-scoring mirror list indefinitely.
+  // Reset it once when the curated source schema changes, then preserve health
+  // scores again from that point forward.
+  const sameVersion = store.get('mirrorPoolVersion', 0) === MIRROR_POOL_VERSION;
+  const saved = sameVersion ? store.get('mirrors', null) : null;
   const map = new Map();
   if(Array.isArray(saved)) saved.forEach(m => { if(m && m.h) map.set(m.h, m); });
-  SEEDS.forEach(([hh,kk]) => { if(!map.has(hh)) map.set(hh, { h:hh, k:kk, score:5, lastOk:0, fails:0, gw:0, latency:0 }); });
+  SEEDS.forEach(([hh,kk],i) => {
+    const preferred = PRIMARY_PIPED.includes(hh);
+    const existing = map.get(hh);
+    if(existing){ existing.k=kk; existing.preferred=preferred; }
+    else map.set(hh, { h:hh, k:kk, score:preferred?12:5, lastOk:0, fails:0, gw:0, latency:0, preferred });
+  });
   pool = [...map.values()];
+  pool.sort((a,b)=> (b.preferred?1:0)-(a.preferred?1:0) || b.score-a.score || b.lastOk-a.lastOk);
+  store.set('mirrorPoolVersion', MIRROR_POOL_VERSION);
 }
 function savePool(){ store.set('mirrors', pool.map(m => ({h:m.h,k:m.k,score:m.score,lastOk:m.lastOk,fails:m.fails,gw:m.gw}))); }
 function upsert(m){
@@ -1061,32 +1085,37 @@ async function refreshRegistries(){
   savePool();
 }
 async function healthCheck(m){
-  const path = m.k === 'piped' ? '/' : '/api/v1/stats';
+  // Piped's healthcheck is not guaranteed to be JSON. The old code sent it
+  // through mirrorGet(), which always called response.json() and could mark a
+  // healthy server dead simply because the health response was plain text.
+  const path = m.k === 'piped' ? '/healthcheck' : '/api/v1/stats';
+  const target = 'https://' + m.h + path;
+  const order = [m.gw||0, 0,1,2,3].filter((v,i,a)=>a.indexOf(v)===i);
   const t0 = performance.now();
-  try{ await mirrorGet(m, path, 4500); m.lastOk = Date.now(); m.score = clamp(m.score+1,0,20); m.latency = performance.now()-t0; return true; }
-  catch(e){ m.fails++; m.score = clamp(m.score-1,0,20); return false; }
+  for(const g of order){
+    try{
+      const r = await fetchWithTimeout(GATEWAYS[g](target), 4500);
+      if(!r.ok) throw new Error('http '+r.status);
+      m.gw=g; m.lastOk=Date.now(); m.score=clamp(m.score+2,0,20); m.latency=performance.now()-t0; return true;
+    }catch(_){ }
+  }
+  m.fails++; m.score=clamp(m.score-2,0,20); return false;
 }
 async function warmup(){
   setConn('searching');
   await Promise.all(pickMirrors(5).map(healthCheck));
   savePool(); updateConnFromState();
 }
-function pickMirrors(n=5){
-  const live = pool.filter(m => m.lastOk && Date.now()-m.lastOk < 12*60*1000);
-  const rest = pool.filter(m => !(m.lastOk && Date.now()-m.lastOk < 12*60*1000));
-  const shuf = a => { for(let i=a.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [a[i],a[j]]=[a[j],a[i]]; } return a; };
-  const out = [];
-  const take = (arr, want) => { for(const m of shuf(arr.slice())){ if(out.length>=want) break; if(!out.includes(m)) out.push(m); } };
-  take(live, n); if(out.length < n) take(rest, n);
-  if(out.length >= 2){
-    const kinds = new Set(out.map(m=>m.k));
-    if(kinds.size === 1){
-      const need = out[0].k === 'piped' ? 'invidious' : 'piped';
-      const extra = pool.find(m => m.k===need && !out.includes(m));
-      if(extra) out[out.length-1] = extra;
-    }
-  }
-  return out.slice(0, n);
+function pickMirrors(n=6, exclude=new Set()){
+  const liveCutoff=Date.now()-12*60*1000;
+  const rank = m => (m.lastOk&&m.lastOk>liveCutoff?1000:0) + (m.preferred?200:0) + (m.k==='piped'?50:0) + (m.score||0)*4 - (m.fails||0)*2 - Math.min(40,(m.latency||0)/250);
+  // Do not deliberately replace a healthy Piped candidate with Invidious.
+  // In 2026 many public Invidious nodes disable API endpoints to control abuse;
+  // they remain useful as a fallback only when they have actually been healthy.
+  const candidates=pool.filter(m=>!exclude.has(m.h)).sort((a,b)=>rank(b)-rank(a));
+  const out=[];
+  for(const m of candidates){ if(out.length>=n) break; if(!out.includes(m)) out.push(m); }
+  return out;
 }
 function setConn(mode){
   const dot = $('#connDot'), lab = $('#connLabel');
@@ -1160,20 +1189,32 @@ function cacheGet(map,key,ttl){ const v=map.get(key); if(!v) return null; if(Dat
 function cacheSet(map,key,value){ map.set(key,{at:Date.now(),value}); if(map.size>40) map.delete(map.keys().next().value); }
 function filterFor(kind, f){ if(kind==='piped') return f==='songs' ? 'music_songs' : f==='videos' ? 'videos' : 'all'; return 'video'; }
 async function runSearchOn(m, q, f, page, nextpage){
-  let path;
+  const t0 = performance.now();
+  let json, items=[];
   if(m.k==='piped'){
     const ff = filterFor('piped', f);
-    path = (nextpage && m === (lastSearch && lastSearch.winner))
+    const isNext = !!(nextpage && m === (lastSearch && lastSearch.winner));
+    const primaryPath = isNext
       ? `/nextpage/search?q=${enc(q)}&filter=${ff}&nextpage=${enc(nextpage)}`
       : `/search?q=${enc(q)}&filter=${ff}`;
+    try{
+      json = await mirrorGet(m, primaryPath, 7000);
+      items = normalize(json, m.k);
+    }catch(e){
+      // Some public Piped nodes temporarily reject one search filter while the
+      // generic search endpoint still works. Fall through to 'all' below.
+      if(isNext || ff==='all') throw e;
+    }
+    if(!items.length && !isNext && ff!=='all'){
+      json = await mirrorGet(m, `/search?q=${enc(q)}&filter=all`, 7000);
+      items = normalize(json, m.k);
+    }
   } else {
-    path = `/api/v1/search?q=${enc(q)}&type=video&page=${page||1}`;
+    json = await mirrorGet(m, `/api/v1/search?q=${enc(q)}&type=video&page=${page||1}`, 7000);
+    items = normalize(json, m.k);
   }
-  const t0 = performance.now();
-  const json = await mirrorGet(m, path, 8000);
-  const items = normalize(json, m.k);
   if(!items.length) throw new Error('empty');
-  m.lastOk = Date.now(); m.score = clamp(m.score+3,0,20); m.latency = performance.now()-t0;
+  m.lastOk = Date.now(); m.fails = Math.max(0,(m.fails||0)-1); m.score = clamp(m.score+3,0,20); m.latency = performance.now()-t0;
   return { mirror:m, items, nextpage: json && json.nextpage ? json.nextpage : null, kind:m.k };
 }
 async function searchRace(q, f, opts={}){
@@ -1183,11 +1224,28 @@ async function searchRace(q, f, opts={}){
     if(cached){ setConn('connected'); return cached; }
   }
   setConn('searching');
-  const cands = pickMirrors(5);
   const page = opts.page || 1, nextpage = opts.nextpage || null;
-  const attempts = cands.map(m => runSearchOn(m, q, f, page, nextpage).catch(e => { m.score = clamp(m.score-2,0,20); m.fails++; return null; }));
-  const result = await raceFor(attempts, r => r && r.items && r.items.length);
-  setConn('connected'); updateConnFromState();
+  const tried = new Set();
+  let attempts=[];
+  const runWave = async (count) => {
+    const cands=pickMirrors(count,tried);
+    cands.forEach(m=>tried.add(m.h));
+    const wave=cands.map(m => runSearchOn(m,q,f,page,nextpage).catch(e => { m.score=clamp(m.score-2,0,20); m.fails=(m.fails||0)+1; return null; }));
+    attempts.push(...wave);
+    return await raceFor(wave, r => r && r.items && r.items.length);
+  };
+  let result;
+  try{
+    // First wave is intentionally small and biased toward known CORS-capable
+    // Piped nodes, so a normal search returns quickly.
+    result=await runWave(6);
+  }catch(firstError){
+    // Do not turn one bad set of public instances into a dead app. Refresh the
+    // registry and immediately race a second, disjoint wave before failing UI.
+    try{ await refreshRegistries(); }catch(_){ }
+    result=await runWave(6);
+  }
+  setConn('connected'); updateConnFromState(); savePool();
   const merged = new Map(); result.items.forEach(it => merged.set(it.id, it));
   Promise.all(attempts).then(rest => {
     rest.forEach(r => { if(r && r.items) r.items.forEach(it => { if(!merged.has(it.id)) merged.set(it.id, it); }); });

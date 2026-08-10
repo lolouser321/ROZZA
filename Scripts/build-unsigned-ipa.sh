@@ -40,14 +40,17 @@ test -s "$APP_PATH/yt_background_bridge.js"
 test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleDisplayName' "$APP_PATH/Info.plist")" = "ROZZA"
 test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIconName' "$APP_PATH/Info.plist")" = "AppIcon"
 test "$(/usr/libexec/PlistBuddy -c 'Print :UIBackgroundModes:0' "$APP_PATH/Info.plist")" = "audio"
-test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP_PATH/Info.plist")" = "4.0.2"
-test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP_PATH/Info.plist")" = "22"
+test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP_PATH/Info.plist")" = "4.0.3"
+test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP_PATH/Info.plist")" = "23"
 
-# Build 22 regression guard: make sure Xcode packaged the new foreground ->
+# Build 23 regression guard: make sure Xcode packaged the new foreground ->
 # native playback-intent handoff instead of a stale HTML or Swift build.
 cmp -s "$PROJECT_ROOT/rozza2.html" "$APP_PATH/rozza2.html"
 cmp -s "$PROJECT_ROOT/Resources/yt_background_bridge.js" "$APP_PATH/yt_background_bridge.js"
 grep -q "wantsPlayback: st.source==='youtube' ? !!YT.wantPlay : isPlaying" "$APP_PATH/rozza2.html"
+grep -q "const MIRROR_POOL_VERSION = 3;" "$APP_PATH/rozza2.html"
+grep -q "pipedapi.syncpundit.io" "$APP_PATH/rozza2.html"
+grep -q "/healthcheck" "$APP_PATH/rozza2.html"
 # `strings | grep -q` is unsafe under pipefail: grep -q exits as soon as it
 # finds a match, which can SIGPIPE `strings` mid-write ("failed to flush
 # output") and abort the whole script even though the match was found.
