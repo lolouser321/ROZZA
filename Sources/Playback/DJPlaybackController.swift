@@ -84,7 +84,12 @@ final class DJPlaybackController: NSObject, ObservableObject {
 
         switch event {
         case "VideoPlay":
-            if hardUserPauseActive || !youtubeWantsPlayback {
+            // Transport observation is allowed to refresh isYouTubePlaying, but
+            // it must never invent user intent. The Build 28 regression gated
+            // this event on youtubeWantsPlayback; during the Home/lock race the
+            // mirror can still be false for a few milliseconds, so the native
+            // layer immediately paused a recovery that was actually correct.
+            if hardUserPauseActive {
                 isYouTubePlaying = false
                 enforcePausedTransportAfterHumanPause(reason: "stale-video-play")
             } else {
@@ -97,9 +102,9 @@ final class DJPlaybackController: NSObject, ObservableObject {
             updateNativePlaybackState(isPlaying: false, payload: payload)
         case "VideoIsPlaying":
             let reportedPlaying = (payload["paused"] as? Bool) == false
-            let effectivePlaying = reportedPlaying && youtubeWantsPlayback && !hardUserPauseActive
+            let effectivePlaying = reportedPlaying && !hardUserPauseActive
             if effectivePlaying { _ = configureAudioSession() }
-            if reportedPlaying && !effectivePlaying {
+            if reportedPlaying && hardUserPauseActive {
                 enforcePausedTransportAfterHumanPause(reason: "stale-video-is-playing")
             }
             if isYouTubePlaying != effectivePlaying {
@@ -120,14 +125,16 @@ final class DJPlaybackController: NSObject, ObservableObject {
             }
         case "BackgroundVideoPlaying":
             _ = configureAudioSession()
-            // Observation is NOT intent. A delayed automatic recovery event
-            // must never turn a human Pause back into Play.
-            if youtubeWantsPlayback && !hardUserPauseActive {
-                isYouTubePlaying = true
-                updateNativePlaybackState(isPlaying: true, payload: payload)
-            } else {
+            // Observation is NOT intent. Accept the transport observation unless
+            // a real human/system Pause fence is active. Crucially, do not require
+            // the native intent mirror to already be true here: the iframe bridge
+            // can beat the main-frame handoff during willResignActive.
+            if hardUserPauseActive {
                 isYouTubePlaying = false
                 enforcePausedTransportAfterHumanPause(reason: "stale-background-playing")
+            } else {
+                isYouTubePlaying = true
+                updateNativePlaybackState(isPlaying: true, payload: payload)
             }
         case "BackgroundVideoPause":
             // Do not immediately mark the Lock Screen as paused when the
@@ -142,13 +149,13 @@ final class DJPlaybackController: NSObject, ObservableObject {
         case "BackgroundPulse":
             // Pulse reports transport state only; it cannot create user intent.
             if (payload["paused"] as? Bool) == false {
-                if youtubeWantsPlayback && !hardUserPauseActive {
+                if hardUserPauseActive {
+                    isYouTubePlaying = false
+                    enforcePausedTransportAfterHumanPause(reason: "stale-background-pulse")
+                } else {
                     _ = configureAudioSession()
                     isYouTubePlaying = true
                     updateNativePlaybackState(isPlaying: true, payload: payload)
-                } else {
-                    isYouTubePlaying = false
-                    enforcePausedTransportAfterHumanPause(reason: "stale-background-pulse")
                 }
             }
         case "YouTubeFullscreen":
@@ -157,6 +164,23 @@ final class DJPlaybackController: NSObject, ObservableObject {
             }
         default:
             print("[ROZZA YouTube messenger] event:", event)
+        }
+    }
+
+    /// Explicit transport intent from the main ROZZA player. Unlike iframe
+    /// play/pause observations, this message is sent only when the app/user
+    /// intentionally changes whether playback should be running.
+    func handlePlaybackIntent(_ payload: [String: Any]) {
+        guard (payload["source"] as? String)?.lowercased() == "youtube",
+              let shouldPlay = payload["shouldPlay"] as? Bool else { return }
+        let reason = payload["reason"] as? String ?? "main-player"
+        if shouldPlay {
+            youtubeWantsPlayback = true
+            hardUserPauseActive = false
+            _ = configureAudioSession()
+            print("[ROZZA INTENT] main-player PLAY reason=\(reason)")
+        } else {
+            registerExplicitPlaybackIntent(shouldPlay: false, reason: "main-player-\(reason)")
         }
     }
 
@@ -534,10 +558,16 @@ final class DJPlaybackController: NSObject, ObservableObject {
                 try? ROZZAAudioSession.shared.configureAndActivateIfNeeded()
                 let nativeIntentWasPlaying = self.resumeYouTubeAfterBackgroundTransition
                 self.evaluateYouTube("if(window.ROZZANativeControls) window.ROZZANativeControls.backgroundPrepare();") { result, _ in
+                    guard generation == self.backgroundResumeGeneration else { return }
                     let jsIntent = (result as? Bool) == true
-                    if jsIntent && !self.resumeYouTubeAfterBackgroundTransition {
-                        self.resumeYouTubeAfterBackgroundTransition = true
-                        self.scheduleBackgroundYouTubeResumeKicks(generation: generation)
+                    // backgroundPrepare() reads YT.wantPlay from the main player,
+                    // so this is genuine intent, not a transport observation.
+                    if jsIntent && !self.hardUserPauseActive {
+                        self.youtubeWantsPlayback = true
+                        if !self.resumeYouTubeAfterBackgroundTransition {
+                            self.resumeYouTubeAfterBackgroundTransition = true
+                            self.scheduleBackgroundYouTubeResumeKicks(generation: generation)
+                        }
                     } else if !jsIntent && !nativeIntentWasPlaying {
                         self.endBackgroundTransitionTask()
                     }
@@ -698,6 +728,12 @@ final class DJPlaybackController: NSObject, ObservableObject {
                 if !reportedIntent {
                     youtubeWantsPlayback = false
                     isYouTubePlaying = false
+                    // The main player only sets YT.wantPlay=false on an explicit
+                    // pause/stop. Lifecycle-induced PAUSED states keep wantPlay
+                    // true, so a foreground false here is safe to treat as human.
+                    if UIApplication.shared.applicationState == .active {
+                        hardUserPauseActive = true
+                    }
                 } else if !hardUserPauseActive || UIApplication.shared.applicationState == .active {
                     // In foreground, a new main-player PLAY is a real user/app
                     // action and may clear a previous Lock Screen hard pause.

@@ -19,6 +19,7 @@ struct ROZZAWebAppView: UIViewRepresentable {
         configuration.defaultWebpagePreferences.allowsContentJavaScript = true
         configuration.userContentController.add(context.coordinator, name: "audioSession")
         configuration.userContentController.add(context.coordinator, name: "nowPlaying")
+        configuration.userContentController.add(context.coordinator, name: "playbackIntent")
         configuration.userContentController.add(context.coordinator, name: "haptics")
         configuration.userContentController.add(context.coordinator, name: "networkProxy")
         // Install only the new background-only bridge. It is injected into
@@ -81,6 +82,9 @@ struct ROZZAWebAppView: UIViewRepresentable {
                 if action == "activate" { activateAudioSession() }
             } else if message.name == "nowPlaying", let dict = message.body as? [String: Any] {
                 dj?.updateNowPlaying(info: dict)
+            } else if message.name == "playbackIntent", message.frameInfo.isMainFrame,
+                      let dict = message.body as? [String: Any] {
+                dj?.handlePlaybackIntent(dict)
             } else if message.name == "haptics" {
                 fireHaptic(message.body as? String ?? "light")
             } else if message.name == "networkProxy", message.frameInfo.isMainFrame,
@@ -128,7 +132,7 @@ struct ROZZAWebAppView: UIViewRepresentable {
             let timeout = min(max(requestedTimeout, 2.0), 12.0)
             var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: timeout)
             request.setValue("application/json, text/plain, */*", forHTTPHeaderField: "Accept")
-            request.setValue("ROZZA/4.1.2 iOS", forHTTPHeaderField: "User-Agent")
+            request.setValue("ROZZA/4.1.3 iOS", forHTTPHeaderField: "User-Agent")
 
             URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
                 let status = (response as? HTTPURLResponse)?.statusCode ?? 0

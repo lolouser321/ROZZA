@@ -19,7 +19,7 @@ if dups: errors.append('duplicate HTML ids: '+', '.join(dups))
 for rid in ['app','tabbar','searchInput','results','minibar','npSheet','queueSheet','eventSheet','driveSheet','drivePrev','drivePlay','driveNext','flowEnergy','likedTracks','vehicleControlStatus','copyVehicleDiagnosticsBtn']:
     if rid not in seen: errors.append('missing required HTML id: '+rid)
 if 'const DEBUG = false;' not in html: errors.append('production HTML DEBUG must be false')
-if 'ROZZA 4.1.2 · HD SMART PAUSE' not in html: errors.append('wrong visible version label')
+if 'ROZZA 4.1.3 · BG STABLE' not in html: errors.append('wrong visible version label')
 if 'id="ytArtworkCover"' not in html: errors.append('Now Playing artwork cover missing')
 if 'rozza-signature' not in html or '<b>ROZZA</b>' not in html: errors.append('ROZZA artwork signature missing')
 if 'This video can’t be embedded right now.' in html: errors.append('legacy YouTube embed-error copy still visible in Now Playing')
@@ -64,8 +64,12 @@ if 'hardUserPauseActive' not in dj or 'registerExplicitPlaybackIntent' not in dj
 if 'BackgroundVideoPlaying' not in dj or 'youtubeWantsPlayback = true\n            isYouTubePlaying = true' in dj: errors.append('automatic bridge event can still promote itself into user intent')
 if 'artworkCandidates' not in html or 'maxresdefault.jpg' not in html or 'loadBestArtworkImage' not in html: errors.append('HD artwork fallback chain missing')
 if 'YT.resume(reason)' not in html: errors.append('automatic background recovery still mutates explicit playback intent')
+if 'postPlaybackIntentToNative(true, reason)' not in html or 'postPlaybackIntentToNative(false, reason)' not in html: errors.append('explicit main-frame playback-intent handoff missing')
+if 'name: "playbackIntent"' not in web or 'handlePlaybackIntent' not in web: errors.append('native explicit-intent message handler missing')
+if 'reportedPlaying && !hardUserPauseActive' not in dj: errors.append('transport observation still incorrectly depends on mirrored play intent')
+if 'if jsIntent && !self.hardUserPauseActive' not in dj or 'self.youtubeWantsPlayback = true' not in dj: errors.append('willResignActive JS intent promotion missing')
 proj=(root/'project.yml').read_text()
-for token in ['MARKETING_VERSION: 4.1.2','CURRENT_PROJECT_VERSION: 28','Resources/yt_background_bridge.js','path: rozza2.html']:
+for token in ['MARKETING_VERSION: 4.1.3','CURRENT_PROJECT_VERSION: 29','Resources/yt_background_bridge.js','path: rozza2.html']:
     if token not in proj: errors.append('project.yml missing: '+token)
 workflow=(root/'.github/workflows/ios-ipa.yml').read_text()
 if 'working-directory: ios' in workflow or 'path: ios/ROZZA-unsigned.ipa' in workflow: errors.append('GitHub workflow still builds obsolete ios subproject')
@@ -77,4 +81,4 @@ if errors:
     print('ROZZA PERFORMANCE-AUTOPLAY source QA FAILED:')
     for e in errors: print(' -',e)
     sys.exit(1)
-print(f'ROZZA HD-SMART-PAUSE source QA PASS — {len(p.ids)} ids, no duplicates, artwork cover + signature + remote guards present.')
+print(f'ROZZA BG-STABLE source QA PASS — {len(p.ids)} ids, no duplicates, artwork cover + signature + remote guards present.')

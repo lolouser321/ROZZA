@@ -778,7 +778,7 @@ html,body{background:#050507}
             <div class="set-row"><div><div class="sl">Vehicle controls</div><div class="sd" id="vehicleControlStatus">Ready · waiting for a command</div></div><button class="text-action" id="copyVehicleDiagnosticsBtn">Copy</button></div>
             <div class="set-row"><div><div class="sl">Playback diagnostics</div><div class="sd">Copy a private technical timeline when something fails</div></div><button class="text-action" id="copyDiagnosticsBtn">Copy</button></div>
           </div>
-          <div class="ver">ROZZA 4.1.2 · HD SMART PAUSE</div>
+          <div class="ver">ROZZA 4.1.3 · BG STABLE</div>
         </section>
       </main>
 
@@ -1498,6 +1498,16 @@ function activateNativeAudioSession(){
 function deactivateNativeAudioSession(){
   try{ window.webkit?.messageHandlers?.audioSession?.postMessage('deactivate'); }catch(_){}
 }
+function postPlaybackIntentToNative(shouldPlay, reason='main-player'){
+  try{
+    window.webkit?.messageHandlers?.playbackIntent?.postMessage({
+      source:'youtube',
+      shouldPlay:!!shouldPlay,
+      reason:String(reason||'main-player'),
+      at:Date.now()
+    });
+  }catch(_){}
+}
 function postNowPlayingToNative(){
   if(!current){
     try { window.webkit?.messageHandlers?.nowPlaying?.postMessage({ clear:true, isPlaying:false, source:'', wantsPlayback:false, queueIndex:0, queueCount:0 }); } catch(_) {}
@@ -1723,6 +1733,7 @@ const YT = (() => {
       clearTimeout(recoveryT);
       ForegroundRecovery.onLoadOrStop();
       ROZZADebug.yt('LOAD id='+id+' autoplay='+autoplay+' reuse='+canReuse);
+      if(autoplay) postPlaybackIntentToNative(true, canReuse?'track-switch':'track-load');
       buildIframe(id, autoplay);
       syncBackgroundIntent(wantPlay, canReuse?'track-switch':'load');
       poll();
@@ -1732,6 +1743,7 @@ const YT = (() => {
     play(reason='explicit-play'){
       wantPlay=true; lastPlayRequestAt=Date.now();
       ROZZADebug.yt('CMD PLAY reason='+reason+' wantPlay=true');
+      postPlaybackIntentToNative(true, reason);
       syncBackgroundIntent(true, reason);
       if(backgroundBridgeEnabled) setBackgroundBridge(true, true, reason);
       if(ready) cmd('playVideo',[]);
@@ -1756,6 +1768,7 @@ const YT = (() => {
     pause(reason='ROZZA YouTube control'){
       wantPlay=false; lastExplicitPauseAt=Date.now();
       ROZZADebug.yt('CMD PAUSE reason='+reason+' wantPlay=false');
+      postPlaybackIntentToNative(false, reason);
       syncBackgroundIntent(false, 'explicit-pause');
       if(backgroundBridgeEnabled) setBackgroundBridge(true, false, 'explicit-pause');
       if(ready) cmd('pauseVideo',[]);
@@ -2138,7 +2151,7 @@ const RemoteDiagnostics={
   },
   snapshot(){
     const st=PlaybackState.get();
-    return {version:'4.1.2',build:28,nativeShell:IS_NATIVE_SHELL,last:this.last,queueIndex:Q.idx,queueCount:Q.items.length,current:current?{id:trackKey(current),title:current.title,source:current.source}:null,playback:st,youtube:{state:YT.state,wantPlay:YT.wantPlay,playing:YT.playing,mounted:YT.mounted,videoId:YT.videoId},foreground:ROZZAAppForeground};
+    return {version:'4.1.3',build:29,nativeShell:IS_NATIVE_SHELL,last:this.last,queueIndex:Q.idx,queueCount:Q.items.length,current:current?{id:trackKey(current),title:current.title,source:current.source}:null,playback:st,youtube:{state:YT.state,wantPlay:YT.wantPlay,playing:YT.playing,mounted:YT.mounted,videoId:YT.videoId},foreground:ROZZAAppForeground};
   }
 };
 window.ROZZARemoteDiagnostics=RemoteDiagnostics;
@@ -3258,7 +3271,7 @@ function wire(){
   $('#clrMirrors').onclick=()=>{ store.del('mirrors'); loadPool(); warmup(); toast('Mirror cache reset','ok','DATA'); };
   $('#queueClear').onclick=()=>{ clearQueue(); toast('Queue cleared','ok','QUEUE'); };
   const copyVehicleDiag=$('#copyVehicleDiagnosticsBtn'); if(copyVehicleDiag) copyVehicleDiag.onclick=async()=>{ const payload=JSON.stringify(RemoteDiagnostics.snapshot(),null,2); try{await navigator.clipboard.writeText(payload);toast('Vehicle diagnostics copied','ok','DRIVE REMOTE');}catch(e){toast('Could not access clipboard','warn','DRIVE REMOTE');} };
-  const copyDiag=$('#copyDiagnosticsBtn'); if(copyDiag) copyDiag.onclick=async()=>{ const payload='ROZZA 4.1.2 HD SMART PAUSE\n'+JSON.stringify(ROZZADebug.getState(),null,2)+'\n\n'+ROZZADebug.getLog(); try{await navigator.clipboard.writeText(payload);toast('Diagnostics copied','ok','SUPPORT');}catch(e){toast('Could not access clipboard','warn','SUPPORT');} };
+  const copyDiag=$('#copyDiagnosticsBtn'); if(copyDiag) copyDiag.onclick=async()=>{ const payload='ROZZA 4.1.3 BG STABLE\n'+JSON.stringify(ROZZADebug.getState(),null,2)+'\n\n'+ROZZADebug.getLog(); try{await navigator.clipboard.writeText(payload);toast('Diagnostics copied','ok','SUPPORT');}catch(e){toast('Could not access clipboard','warn','SUPPORT');} };
   const netRetry=$('#networkRetry'); if(netRetry) netRetry.onclick=()=>{ refreshRegistries().then(()=>warmup()); };
   window.addEventListener('offline',()=>{ const b=$('#networkBanner');if(b)b.classList.add('show');setConn('quiet'); });
   window.addEventListener('online',()=>{ const b=$('#networkBanner');if(b)b.classList.remove('show');refreshRegistries().then(()=>warmup());toast('Back online','ok','CONNECTION'); });

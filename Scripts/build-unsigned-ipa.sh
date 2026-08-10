@@ -66,12 +66,13 @@ check "yt_background_bridge.js present" test -s "$APP_PATH/yt_background_bridge.
 check "CFBundleDisplayName" test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleDisplayName' "$APP_PATH/Info.plist")" = "ROZZA"
 check "CFBundleIconName" test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIconName' "$APP_PATH/Info.plist")" = "AppIcon"
 check "UIBackgroundModes[0]" test "$(/usr/libexec/PlistBuddy -c 'Print :UIBackgroundModes:0' "$APP_PATH/Info.plist")" = "audio"
-check "CFBundleShortVersionString == 4.1.2" test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP_PATH/Info.plist")" = "4.1.2"
-check "CFBundleVersion == 28" test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP_PATH/Info.plist")" = "28"
+check "CFBundleShortVersionString == 4.1.3" test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP_PATH/Info.plist")" = "4.1.3"
+check "CFBundleVersion == 29" test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP_PATH/Info.plist")" = "29"
 
-# Build 28 regression guard: make sure Xcode packaged the new foreground ->
-# native playback-intent handoff, Drive Mode, artwork-signature, and hard
-# human-pause fence work instead of a stale HTML or Swift build.
+# Build 29 regression guard: make sure Xcode packaged the new foreground ->
+# native playback-intent handoff, Drive Mode, artwork-signature, and the
+# main-frame playbackIntent channel + background-stability fix instead of a
+# stale HTML or Swift build.
 check_cmp "packaged rozza2.html matches source" "$PROJECT_ROOT/rozza2.html" "$APP_PATH/rozza2.html"
 check_cmp "packaged yt_background_bridge.js matches source" "$PROJECT_ROOT/Resources/yt_background_bridge.js" "$APP_PATH/yt_background_bridge.js"
 check "background handoff wantsPlayback line" grep -q "wantsPlayback: st.source==='youtube' ? !!YT.wantPlay : isPlaying" "$APP_PATH/rozza2.html"
@@ -92,6 +93,7 @@ check "ROZZA signature present" grep -q 'rozza-signature' "$APP_PATH/rozza2.html
 check "HD artwork candidate chain" grep -q "maxresdefault.jpg" "$APP_PATH/rozza2.html"
 check "HD artwork loader wired" grep -q "loadBestArtworkImage" "$APP_PATH/rozza2.html"
 check "intent-preserving resume path" grep -q "YT.resume(reason)" "$APP_PATH/rozza2.html"
+check "main-frame playbackIntent dispatch" grep -q "postPlaybackIntentToNative(true, reason)" "$APP_PATH/rozza2.html"
 if grep -q "This video can’t be embedded right now." "$APP_PATH/rozza2.html"; then
   echo "  [FAIL] legacy embed-error copy removed"
   exit 1
@@ -105,15 +107,16 @@ check "continuous playback default" grep -q "continuousPlayback:true" "$APP_PATH
 # Capture to a file once so grep's exit status is the only one that matters.
 #
 # Only string literals long enough (>~15 bytes) to survive Swift's
-# small-string optimization intact are checked against the compiled binary:
-# short literals like "networkProxy"/"remote-native-" and bare identifiers
-# like "hardUserPauseActive" (property names aren't string data at all, so
-# they were never going to appear in `strings` output regardless of length)
-# are dropped here. qa-source.py's source-level greps already cover all of
-# these reliably.
+# small-string optimization intact are checked against the compiled binary.
+# Dropped this round: "playbackIntent" (14 bytes, right at the SSO risk
+# boundary that already burned two previous builds) and "hardUserPauseActive"
+# (a Swift property name, never a runtime string literal, so `strings` was
+# never going to find it regardless of length). qa-source.py's source-level
+# greps already cover all of these reliably.
 strings "$APP_PATH/ROZZA" > "$WORK_DIR/rozza-binary-strings.txt" || true
 check "compiled binary contains background-capture log line" grep -q "Background capture wantsPlayback=" "$WORK_DIR/rozza-binary-strings.txt"
 check "compiled binary contains native pause-fence reason string" grep -q "native-human-pause-fence" "$WORK_DIR/rozza-binary-strings.txt"
+check "compiled binary contains main-player intent log line" grep -q "main-player PLAY reason=" "$WORK_DIR/rozza-binary-strings.txt"
 
 ditto "$APP_PATH" "$WORK_DIR/Payload/ROZZA.app"
 ditto -c -k --sequesterRsrc --keepParent "$WORK_DIR/Payload" "$OUTPUT_IPA"
