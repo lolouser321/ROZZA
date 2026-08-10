@@ -6,8 +6,8 @@ options:
 settings:
   base:
     SWIFT_VERSION: 5.10
-    MARKETING_VERSION: 2.0
-    CURRENT_PROJECT_VERSION: 12
+    MARKETING_VERSION: 4.0.1
+    CURRENT_PROJECT_VERSION: 21
 targets:
   ROZZA:
     type: application
@@ -38,6 +38,6 @@ targets:
   ROZZATests:
     type: bundle.unit-test
     platform: iOS
-    sources: [Tests]
+    sources: [tests]
     dependencies:
       - target: ROZZA

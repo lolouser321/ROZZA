@@ -10,6 +10,7 @@ command -v xcodegen >/dev/null 2>&1 || {
   exit 1
 }
 
+python3 "$PROJECT_ROOT/Scripts/qa-source.py"
 "$PROJECT_ROOT/Scripts/verify-ios-resources.sh"
 
 rm -rf "$WORK_DIR"

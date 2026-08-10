@@ -1,0 +1,1491 @@
+ROZZA — MASTER PRODUCT ROADMAP V2
+Goal: Build a world-class music product that feels unique, alive, intelligent, premium, fun, and unforgettable.
+
+======================================================================
+0. NON-NEGOTIABLE PRODUCT PRINCIPLES
+======================================================================
+
+1. One tap should usually be enough.
+2. Music should never randomly stop.
+3. Never make the user fight the player.
+4. Search should feel instant.
+5. The queue should never become a dead end.
+6. Arabic support must be first-class.
+7. ROZZA should feel native, premium, alive, and fun.
+8. Animations must improve the experience, not slow it down.
+9. Every error should have a recovery path.
+10. Playback reliability is more important than visual experiments.
+11. ROZZA must have its own identity.
+12. Build fewer features, but make them excellent.
+13. Test playback-critical changes on a physical iPhone.
+14. Make the app visually interesting enough that people want to keep looking at it.
+15. ROZZA should feel like its own music platform, not another music player.
+
+======================================================================
+1. PROTECT THE WORKING PLAYBACK ENGINE
+======================================================================
+
+DO NOT casually rewrite:
+- Current YouTube foreground playback flow
+- Existing YouTube state machine
+- Background playback bridge
+- AVAudioSession setup
+- Lock Screen / Control Center integration
+- Persistent WKWebView architecture
+- Play / Pause / Next / Previous / Seek behavior
+- Queue persistence
+- Search/backend APIs
+- Source switching logic
+
+Any playback-critical change must be:
+- isolated
+- logged
+- reversible
+- tested on a real iPhone
+
+======================================================================
+2. P0 — PLAYBACK RELIABILITY
+======================================================================
+
+[ ] Keep YouTube playing automatically after:
+    - pressing Home
+    - locking the iPhone
+    - opening another app
+    - opening Control Center
+    - returning to ROZZA
+
+[ ] Remove any need to manually press Play from Lock Screen / notification.
+
+[ ] Preserve user intent:
+    - user pressed Play -> recovery allowed
+    - user pressed Pause -> NEVER auto-resume
+
+[ ] Add bounded automatic recovery:
+    - limited attempts
+    - no infinite loops
+    - no repeated background spam
+
+[ ] Survive:
+    - Wi-Fi -> cellular
+    - cellular -> Wi-Fi
+    - temporary internet loss
+    - Bluetooth connect/disconnect
+    - AirPods removal/reconnect
+    - phone calls
+    - audio interruptions
+    - app foreground/background transitions
+
+[ ] Reliable Play / Pause / Next / Previous / Seek in:
+    - app
+    - Lock Screen
+    - Control Center
+    - Bluetooth controls
+
+[ ] Prevent duplicate playback engines controlling one song.
+
+[ ] Add Playback Health Monitor:
+    - unexpected pause detection
+    - stuck loading detection
+    - buffering timeout detection
+    - iframe/player failure detection
+    - safe recovery
+
+[ ] Crash-safe playback state:
+    - song
+    - position
+    - queue
+    - shuffle
+    - repeat
+    - volume
+    - source
+    - playback intent
+
+[ ] NEVER STOP MODE:
+    - if a song fails, immediately recover or move to the best backup
+    - avoid awkward silence
+
+[ ] Hidden emergency backup queue:
+    - always maintain at least one ready fallback track
+    - especially important for parties/events
+
+======================================================================
+3. P0 — SEARCH + INSTANT PLAY
+======================================================================
+
+[ ] Search suggestion plays immediately when tapped.
+
+Expected:
+Tap suggestion -> resolve track -> play immediately.
+
+NOT:
+Tap suggestion -> add to queue -> press Play.
+
+[ ] First result autoplay after direct user search.
+
+[ ] Instant local suggestions before network results.
+
+[ ] Suggestion caching.
+
+[ ] Result metadata prefetching.
+
+[ ] Request cancellation for stale searches.
+
+[ ] Typo tolerance.
+
+[ ] Arabic search.
+
+[ ] Arabic <-> English transliteration.
+Examples:
+"Amr Diab"
+"عمرو دياب"
+
+[ ] Search history.
+
+[ ] Trending searches.
+
+[ ] Artist / song / album / playlist grouping where available.
+
+[ ] Better loading skeletons.
+
+[ ] Better no-result states.
+
+[ ] Smart Duplicate Detection:
+    - merge duplicate versions/results
+    - reduce clutter
+
+[ ] Version Intelligence:
+    - original
+    - remix
+    - live
+    - clean
+    - instrumental
+    - slowed
+    - remastered
+
+======================================================================
+4. COMPLETE UI / UX REDESIGN
+======================================================================
+
+The design must NOT be another recolor.
+
+[ ] Unique ROZZA visual identity.
+
+[ ] Native iPhone feel.
+
+[ ] Remove:
+    - fake phone mockup styling
+    - website-looking controls
+    - demo layouts
+    - desktop-style cards
+    - generic glass everywhere
+    - excessive borders
+
+[ ] Professional design token system:
+    - typography
+    - spacing
+    - radius
+    - elevation
+    - blur
+    - motion
+    - icons
+    - touch targets
+
+[ ] Artwork-driven experience.
+
+[ ] Better depth.
+
+[ ] Premium motion.
+
+[ ] Consistent haptics.
+
+[ ] Respect Reduce Motion.
+
+[ ] Dynamic artwork atmosphere.
+
+[ ] Adaptive day/night visual atmosphere.
+
+[ ] ROZZA mark subtly reacts to playback:
+    - calm when paused
+    - alive when playing
+    - energetic in party mode
+
+======================================================================
+5. ROZZA LIVE — VISUAL MUSIC EXPERIENCE
+======================================================================
+
+Create a signature visual experience that makes people ask:
+"What app is that?"
+
+[ ] Whole Now Playing screen becomes a living visual scene.
+
+[ ] Visuals react to:
+    - artwork colors
+    - tempo
+    - energy
+    - song progress
+    - playback state
+
+[ ] Use:
+    - cinematic lighting
+    - subtle particles
+    - depth
+    - parallax
+    - artwork movement
+    - animated gradients
+    - music-reactive atmosphere
+
+[ ] Avoid cheesy equalizer overload.
+
+[ ] Battery Saver reduces visual complexity.
+
+[ ] Subtle audio-reactive UI.
+
+[ ] Seasonal visual worlds:
+    - Summer
+    - Ramadan / Eid
+    - Christmas
+    - Wedding
+    - Beach
+    - Night Drive
+    - After Party
+
+======================================================================
+6. HOME SCREEN
+======================================================================
+
+[ ] Completely redesign Home.
+
+Suggested sections:
+- Continue Listening
+- Recently Played
+- Made for You
+- Trending Now
+- Arabic Hits
+- Global Hits
+- Quick Picks
+- Party
+- Chill
+- Night
+- Energy
+- Throwbacks
+- New Releases
+- Because You Played...
+- Your Daily Mix
+- Hidden Gems
+- Daily Surprise
+
+[ ] Do not make every section identical.
+
+Use a mix of:
+- hero sections
+- artwork grids
+- horizontal rows
+- compact cards
+- mood chips
+- visual recommendations
+
+[ ] Home adapts to history and taste.
+
+[ ] Home never feels empty.
+
+======================================================================
+7. NOW PLAYING — PREMIUM VERSION
+======================================================================
+
+[ ] Large artwork.
+
+[ ] Dynamic artwork-derived background.
+
+[ ] Beautiful progress bar.
+
+[ ] Previous / Play-Pause / Next.
+
+[ ] Favorite.
+
+[ ] Shuffle.
+
+[ ] Repeat.
+
+[ ] Queue.
+
+[ ] Volume.
+
+[ ] Excellent typography.
+
+[ ] Perfect Arabic / mixed Arabic-English handling.
+
+[ ] Swipe down to dismiss.
+
+[ ] Swipe left/right for track changes if reliable.
+
+[ ] Hold artwork for quick actions.
+
+[ ] Smooth mini-player -> full-player transition.
+
+[ ] Maintain all playback-critical YouTube visibility requirements.
+
+[ ] Song Journey:
+    - intro
+    - verse
+    - chorus
+    - drop
+    - outro
+    when analysis is available
+
+[ ] Smart Chorus Jump:
+    - jump near the most recognizable / useful section when appropriate
+
+[ ] Song DNA:
+    - energy
+    - danceability
+    - mood
+    - era
+    - language
+    - tempo
+    - party score
+
+======================================================================
+8. MINI PLAYER
+======================================================================
+
+[ ] Premium mini-player.
+
+[ ] Artwork.
+
+[ ] Title + artist.
+
+[ ] Play/Pause.
+
+[ ] Optional Next.
+
+[ ] Progress indicator.
+
+[ ] Swipe up -> Now Playing.
+
+[ ] Swipe left/right -> Next/Previous if reliable.
+
+[ ] Perfect safe-area handling.
+
+======================================================================
+9. NAVIGATION
+======================================================================
+
+Possible tabs:
+- Home
+- Search
+- Flow
+- Library
+- Profile / Settings
+
+[ ] Never recreate or reload the player.
+
+[ ] Smooth transitions.
+
+[ ] Strong active state.
+
+[ ] Easy one-handed use.
+
+======================================================================
+10. QUEUE / UP NEXT
+======================================================================
+
+[ ] Current track highlighted.
+
+[ ] Drag reorder.
+
+[ ] Swipe remove.
+
+[ ] Play Next.
+
+[ ] Play Later.
+
+[ ] Clear queue.
+
+[ ] Save queue as playlist.
+
+[ ] Smart queue continuation.
+
+[ ] Auto-refill when low.
+
+[ ] Avoid repeat overload.
+
+[ ] Show recommendation reason:
+    - Similar artist
+    - Trending
+    - Replay favorite
+    - Fits current mood
+    - Related to current track
+
+[ ] AI Queue Doctor / "Fix My Queue":
+    - detect repeated artists
+    - detect duplicate tracks
+    - detect energy crashes
+    - detect bad sequencing
+    - detect language imbalance
+    - one-tap fix
+
+[ ] Undo accidental Next / removal.
+
+======================================================================
+11. ROZZA FLOW — SIGNATURE FEATURE
+======================================================================
+
+One button starts an endless personalized session.
+
+Controls:
+
+ENERGY
+Chill <----------> Energetic
+
+DISCOVERY
+Favorites <------> New Music
+
+ERA
+Classics <-------> New
+
+LANGUAGE
+Arabic <----------> Global
+
+[ ] Sliders change future songs, not current song.
+
+[ ] Endless queue.
+
+[ ] Learns from:
+    - skips
+    - favorites
+    - replays
+    - listening time
+    - manual selections
+
+[ ] ROZZA Flow Orb:
+    replace boring sliders with an interactive orb / visual control that can be dragged toward:
+    - Chill
+    - Energy
+    - Arabic
+    - Global
+    - Classic
+    - New
+    - Familiar
+    - Discovery
+
+[ ] ROZZA Lock-In:
+    keep the current vibe when the user says it is perfect.
+
+[ ] Surprise Me:
+    choose something new with high confidence.
+
+[ ] Hidden Gems Mode:
+    avoid obvious mainstream hits.
+
+======================================================================
+12. RADIO
+======================================================================
+
+[ ] Start Radio from:
+    - song
+    - artist
+    - mood
+    - playlist
+
+[ ] Endless similar music.
+
+[ ] More Like This.
+
+[ ] Less Like This.
+
+[ ] Increase Energy.
+
+[ ] Decrease Energy.
+
+[ ] More Arabic.
+
+[ ] More Global.
+
+======================================================================
+13. PERSONALIZATION ENGINE / ROZZA BRAIN
+======================================================================
+
+[ ] Learn favorite artists.
+
+[ ] Learn genres.
+
+[ ] Learn repeat behavior.
+
+[ ] Learn skips.
+
+[ ] Understand skip timing:
+    - immediate skip
+    - mid-song skip
+    - near-end skip
+
+[ ] Time-of-day taste.
+
+[ ] Day-of-week taste.
+
+[ ] Party vs personal listening.
+
+[ ] Recommendation confidence.
+
+[ ] Discovery preference.
+
+[ ] Private Session:
+    temporary listening does not affect recommendations.
+
+[ ] Temporary Taste:
+    "Tonight only" mode.
+
+[ ] ROZZA Brain explanations:
+    examples:
+    - "You replay this artist often"
+    - "High-energy Arabic match"
+    - "Similar to your Saturday-night listening"
+
+[ ] Taste DNA:
+    visual profile of:
+    - Arabic vs Global
+    - Classic vs New
+    - Chill vs Energy
+    - Familiar vs Discovery
+    - genres
+    - eras
+    - artists
+
+======================================================================
+14. AI MUSIC ASSISTANT
+======================================================================
+
+User can say/type:
+
+"Play Egyptian songs like this but newer."
+
+"Make this queue more energetic."
+
+"No slow songs for the next hour."
+
+"Give me Arabic classics."
+
+"Play mostly Arabic with some English."
+
+"Don't play this artist tonight."
+
+[ ] AI modifies the REAL queue.
+
+[ ] AI understands:
+    - current song
+    - current mood
+    - current queue
+    - current event
+
+[ ] AI can change:
+    - energy
+    - language
+    - era
+    - discovery
+    - duration
+    - artist mix
+
+[ ] Conversational control should be short and music-focused.
+
+[ ] Give the ROZZA assistant a recognizable personality.
+
+======================================================================
+15. AI DJ / SET DIRECTOR
+======================================================================
+
+[ ] Plan the story of a listening session.
+
+[ ] Build a multi-hour energy curve.
+
+[ ] Avoid random mood jumps.
+
+[ ] Adapt after skips.
+
+[ ] Adapt after requests.
+
+[ ] Keep music continuously running.
+
+[ ] AI Set Director:
+    plans warm-up -> rise -> peak -> cooldown.
+
+[ ] Transition Preview:
+    show where the next 3 songs are taking the energy.
+
+======================================================================
+16. WEDDING / EVENT MODE — ROZZA EVENT
+======================================================================
+
+Inputs:
+- event duration
+- country/style
+- language mix
+- energy curve
+- must-play songs
+- blocked songs
+- guest age range
+- opening style
+- peak-time style
+- ending style
+
+[ ] Auto-generate event timeline.
+
+[ ] Endless queue replenishment.
+
+[ ] Energy curve.
+
+[ ] Guest requests.
+
+[ ] Lock important songs.
+
+[ ] DJ-safe mode.
+
+[ ] Event Mode prevents accidental stops/navigation.
+
+[ ] Smart Set Length:
+    "I need exactly 45 minutes."
+
+[ ] Magic Duration:
+    construct a queue that ends near the requested time.
+
+[ ] Do Not Repeat Tonight:
+    avoid replaying tracks during the event.
+
+[ ] Artist Diversity Control:
+    avoid too many songs by one artist close together.
+
+[ ] Language Ratio:
+    example 70% Arabic / 30% English.
+
+[ ] Decade Mix:
+    80s / 90s / 2000s / current percentages.
+
+[ ] Language Morph:
+    gradually move Arabic -> Global.
+
+[ ] Era Morph:
+    gradually move Classics -> Modern.
+
+[ ] One-Tap Rescue:
+    "CHANGE THE VIBE"
+
+[ ] Entrance Mode:
+    prepare exact song + exact timestamp for entrances / birthdays / wedding moments.
+
+[ ] Emergency DJ Button:
+    instantly start a safe backup queue.
+
+[ ] Event Health Screen:
+    - battery
+    - network
+    - queue duration
+    - playback health
+    - next 3 tracks
+    - backup readiness
+    - current energy
+
+[ ] Event Autopilot Confidence:
+    example:
+    "Next 45 minutes: Ready ✓"
+
+[ ] Event recap:
+    - songs played
+    - top request
+    - peak-energy time
+    - most skipped
+    - guest favorites
+
+[ ] ROZZA Event Score:
+    evaluate:
+    - dead air
+    - failures
+    - skips
+    - queue continuity
+    - request satisfaction
+
+======================================================================
+17. ROZZA TOGETHER — SOCIAL / PARTY SYSTEM
+======================================================================
+
+[ ] Party QR.
+
+[ ] Guests scan without installing if possible.
+
+[ ] Song requests.
+
+[ ] Host final control.
+
+[ ] Guest voting.
+
+[ ] Request moderation.
+
+[ ] Duplicate request detection.
+
+[ ] Request limits.
+
+[ ] Live reactions:
+    🔥 ❤️ 😮
+
+[ ] Guest Request Wall:
+    animated visual presentation of requests.
+
+[ ] Request Intelligence:
+    if many guests request similar music, shift gradually.
+
+[ ] Fair DJ Mode:
+    prevent one guest from dominating.
+
+[ ] ROZZA Rooms:
+    temporary shared listening rooms.
+
+[ ] Two-Person Blend:
+    merge two tastes.
+
+[ ] Group Blend:
+    merge tastes for groups/parties.
+
+[ ] Collaborative playlists.
+
+======================================================================
+18. CROWD MODE
+======================================================================
+
+Optional and privacy-conscious.
+
+[ ] Optional local microphone energy analysis.
+
+[ ] Estimate general room activity/noise level.
+
+[ ] Use as one signal for event energy.
+
+[ ] Do NOT require face recognition.
+
+[ ] Prefer on-device/local processing.
+
+======================================================================
+19. LIBRARY
+======================================================================
+
+[ ] Favorites.
+
+[ ] Recently Played.
+
+[ ] Listening History.
+
+[ ] Imported/local music.
+
+[ ] Custom playlists.
+
+[ ] Saved queues.
+
+[ ] Favorite artists.
+
+[ ] Sort/filter.
+
+[ ] Search inside library.
+
+[ ] Local songs feel first-class.
+
+======================================================================
+20. PLAYLISTS
+======================================================================
+
+[ ] Create.
+
+[ ] Rename.
+
+[ ] Reorder.
+
+[ ] Add/remove tracks.
+
+[ ] Artwork.
+
+[ ] Collaborative later.
+
+[ ] Smart playlists:
+    - Most Played
+    - Recently Added
+    - Arabic Favorites
+    - Party Favorites
+    - Never Skipped
+    - Rediscover
+
+======================================================================
+21. MUSIC MEMORY
+======================================================================
+
+[ ] Memory Lane:
+    "You played this a lot 6 months ago."
+
+[ ] Music Memory Cards.
+
+[ ] ROZZA Time Machine:
+    choose a previous month/year and rebuild your old taste.
+
+[ ] Weekly Listening Story.
+
+[ ] Monthly Listening Story.
+
+[ ] Annual ROZZA Replay.
+
+[ ] First-play memory where available.
+
+[ ] Smart Moments:
+    remember parts the user frequently replays.
+
+======================================================================
+22. SONG MOMENTS
+======================================================================
+
+[ ] Bookmark timestamp in a song.
+
+Examples:
+- Best Part
+- Drop
+- Entrance
+- Favorite Line
+- Dance Break
+
+[ ] Favorite Moment Sharing:
+    share a song starting from a timestamp.
+
+[ ] Entrance cue points.
+
+======================================================================
+23. LYRICS / KARAOKE — IF LEGAL SOURCE IS AVAILABLE
+======================================================================
+
+[ ] Lyrics panel.
+
+[ ] Arabic lyrics.
+
+[ ] Transliteration mode:
+    - Arabic
+    - transliteration
+    - both
+
+[ ] Karaoke View.
+
+[ ] Large landscape presentation.
+
+[ ] AirPlay / TV friendly later.
+
+======================================================================
+24. MUSIC DISCOVERY WORLDS
+======================================================================
+
+[ ] Around the World:
+    visual globe to explore:
+    - Egypt
+    - Lebanon
+    - Gulf
+    - Latin
+    - French
+    - African
+    - American
+    - more
+
+[ ] Music Passport:
+    track countries/genres/artists explored.
+
+[ ] Daily Mission:
+    discover one new artist/song.
+
+[ ] Daily Surprise.
+
+[ ] Mystery Track:
+    optionally hide title/artist until later in the song.
+
+[ ] Discovery Swipe:
+    - right = save
+    - left = skip
+    - up = more like this
+
+[ ] Artist Rabbit Hole.
+
+[ ] Artist Journey:
+    early songs -> newer songs -> collaborations -> related artists.
+
+[ ] ROZZA Galaxy:
+    visual artist/genre relationship map.
+
+[ ] Music Map:
+    explore related artists and genres visually.
+
+======================================================================
+25. SHARE EXPERIENCE
+======================================================================
+
+[ ] Share track.
+
+[ ] Share playlist.
+
+[ ] Beautiful ROZZA share cards.
+
+[ ] Instagram Story format.
+
+[ ] Snapchat-friendly format.
+
+[ ] iMessage.
+
+[ ] QR sharing.
+
+[ ] Deep links into ROZZA.
+
+[ ] Favorite Moment sharing.
+
+======================================================================
+26. DYNAMIC ISLAND / LIVE ACTIVITY
+======================================================================
+
+Where technically appropriate:
+
+[ ] Song artwork.
+
+[ ] Title.
+
+[ ] Playback status.
+
+[ ] Deep link to Now Playing.
+
+[ ] Small ROZZA identity animation.
+
+======================================================================
+27. LOCK SCREEN EXPERIENCE
+======================================================================
+
+[ ] Beautiful metadata.
+
+[ ] Correct artwork.
+
+[ ] Reliable Play/Pause.
+
+[ ] Next/Previous where supported.
+
+[ ] Premium ROZZA identity.
+
+[ ] Lock Screen visual themes where technically appropriate.
+
+======================================================================
+28. AIRPODS / BLUETOOTH
+======================================================================
+
+[ ] Pause/resume correctly.
+
+[ ] Route changes.
+
+[ ] Bluetooth disconnect.
+
+[ ] AirPods removal.
+
+[ ] External Play/Pause.
+
+[ ] External Next/Previous.
+
+[ ] No duplicate playback.
+
+======================================================================
+29. CAR EXPERIENCE
+======================================================================
+
+[ ] Car Mode:
+    - huge controls
+    - minimal interaction
+    - favorites
+    - recent
+    - Flow
+    - simple queue
+
+[ ] Voice-first search.
+
+[ ] CarPlay later.
+
+======================================================================
+30. APPLE WATCH / SIRI / SHORTCUTS
+======================================================================
+
+Later ecosystem work:
+
+[ ] Apple Watch controls.
+
+[ ] Siri Shortcuts.
+
+Examples:
+- "Play my ROZZA Flow"
+- "Start Party Mode"
+- "Play Arabic Favorites"
+- "More energy"
+
+[ ] Voice shortcuts.
+
+======================================================================
+31. AUDIO EXPERIENCE — SUPPORTED SOURCES
+======================================================================
+
+[ ] Gapless playback where possible.
+
+[ ] Crossfade where possible.
+
+[ ] Volume normalization.
+
+[ ] EQ presets:
+    - Balanced
+    - Bass
+    - Vocal
+    - Party
+    - Car
+    - Late Night
+
+[ ] Beat-safe Next where technically possible.
+
+[ ] Smooth fade-out.
+
+======================================================================
+32. SLEEP TIMER
+======================================================================
+
+[ ] 15 min.
+
+[ ] 30 min.
+
+[ ] 45 min.
+
+[ ] 60 min.
+
+[ ] End of song.
+
+[ ] End of queue.
+
+[ ] Smooth fade out.
+
+======================================================================
+33. FIRST-LAUNCH EXPERIENCE
+======================================================================
+
+Avoid boring tutorial pages.
+
+[ ] Ask for favorite:
+    - artists
+    - genres
+    - moods
+    - Arabic / Global preference
+
+[ ] Generate Home immediately.
+
+[ ] Allow Skip.
+
+[ ] Keep setup under 60 seconds.
+
+======================================================================
+34. ARABIC / RTL QUALITY
+======================================================================
+
+[ ] Arabic titles.
+
+[ ] English titles.
+
+[ ] Mixed Arabic/English.
+
+[ ] Correct RTL.
+
+[ ] Good truncation.
+
+[ ] Arabic search aliases.
+
+[ ] Transliteration.
+
+[ ] Strong Arabic-capable font stack.
+
+======================================================================
+35. PERFORMANCE
+======================================================================
+
+Target: ROZZA feels immediate.
+
+[ ] Measure startup time.
+
+[ ] Reduce first interaction delay.
+
+[ ] Cancel stale searches.
+
+[ ] Cache results.
+
+[ ] Cache artwork.
+
+[ ] Lazy load large lists.
+
+[ ] Virtualize long lists if needed.
+
+[ ] Avoid huge blur layers.
+
+[ ] Reduce expensive filters.
+
+[ ] Reduce unnecessary DOM mutation.
+
+[ ] Prefer event-based logic over constant polling.
+
+[ ] Stop animations when backgrounded.
+
+[ ] Prevent memory leaks:
+    - timers
+    - observers
+    - event listeners
+    - WKWebView handlers
+
+[ ] Long-session memory testing.
+
+[ ] Smart Battery Mode:
+    reduce visuals, NEVER playback quality/reliability.
+
+[ ] Data Saver Mode.
+
+[ ] Pre-Party Cache / readiness check:
+    validate planned event queue before the event.
+
+======================================================================
+36. NETWORK RESILIENCE
+======================================================================
+
+[ ] Offline detection.
+
+[ ] Weak connection handling.
+
+[ ] Automatic safe retry.
+
+[ ] Manual retry.
+
+[ ] Preserve current queue.
+
+[ ] Wi-Fi -> cellular.
+
+[ ] Cellular -> Wi-Fi.
+
+[ ] Timeout handling.
+
+[ ] No infinite loading spinner.
+
+======================================================================
+37. ERROR EXPERIENCE
+======================================================================
+
+Never show ugly technical failures.
+
+Examples:
+
+"Couldn't play this track."
+[Try Again] [Play Next]
+
+"Connection lost."
+"ROZZA will continue when you're back online."
+
+[ ] Friendly errors.
+
+[ ] Safe automatic recovery.
+
+[ ] Internal playback logs.
+
+======================================================================
+38. INTERNAL DIAGNOSTICS / ROZZA WATCHDOG
+======================================================================
+
+[ ] Playback ring buffer.
+
+[ ] Lifecycle logs.
+
+[ ] Search logs.
+
+[ ] Player source state.
+
+[ ] Error codes.
+
+[ ] Background recovery attempts.
+
+[ ] Export diagnostics.
+
+[ ] One-tap Copy Diagnostics.
+
+[ ] ROZZA Watchdog:
+    quietly monitor:
+    - playback
+    - queue
+    - network
+    - source health
+    - background state
+    and recover before the user notices.
+
+======================================================================
+39. ACCESSIBILITY
+======================================================================
+
+[ ] VoiceOver.
+
+[ ] Dynamic Type where practical.
+
+[ ] Reduce Motion.
+
+[ ] Good contrast.
+
+[ ] Large touch targets.
+
+[ ] Do not rely on haptics alone.
+
+======================================================================
+40. MICRO-INTERACTIONS / FUN
+======================================================================
+
+[ ] Favorite heart animation.
+
+[ ] Play/Pause morph.
+
+[ ] Artwork transitions.
+
+[ ] Queue insertion animation.
+
+[ ] Haptics:
+    - Play
+    - Favorite
+    - Queue add
+    - Reorder
+    - Navigation
+
+[ ] Undo actions.
+
+[ ] Subtle music-reactive atmosphere.
+
+[ ] Hidden power-user gestures.
+
+[ ] Long-press actions.
+
+======================================================================
+41. GAMIFICATION WITHOUT MAKING IT CHILDISH
+======================================================================
+
+[ ] Discovery achievements.
+
+Examples:
+- 100 New Artists Discovered
+- 10 Countries Explored
+- 1,000 Minutes of Arabic Classics
+
+[ ] Music Passport.
+
+[ ] Daily Mission.
+
+[ ] No-Skip Discovery Challenge.
+
+[ ] Taste exploration streaks.
+
+======================================================================
+42. GUEST SAFE / EVENT SAFE
+======================================================================
+
+[ ] Guest Lock:
+    prevent:
+    - leaving ROZZA
+    - changing settings
+    - deleting playlists
+    - stopping the event accidentally
+
+[ ] DJ-Safe Mode:
+    lock the current playing track from accidental taps.
+
+======================================================================
+43. SMART CLEAN MODE
+======================================================================
+
+[ ] Prefer clean/family-friendly versions when available.
+
+[ ] Useful for:
+    - family events
+    - weddings
+    - work
+    - public venues
+
+======================================================================
+44. SESSION CONTINUITY
+======================================================================
+
+[ ] Restore:
+    - song
+    - queue
+    - position
+    - tab
+    - shuffle
+    - repeat
+    - favorites state
+    - Flow state
+
+[ ] Survive iOS killing the app.
+
+[ ] No blank Home while restoring.
+
+======================================================================
+45. SECURITY / PRIVACY
+======================================================================
+
+[ ] No exposed client secrets.
+
+[ ] No private API keys hard-coded.
+
+[ ] Validate URLs.
+
+[ ] Sanitize external metadata.
+
+[ ] Avoid unnecessary tracking.
+
+[ ] Clear history/personalization controls.
+
+[ ] Cache/history deletion controls.
+
+======================================================================
+46. QUALITY / RELEASE TEST MATRIX
+======================================================================
+
+DEVICE:
+[ ] Small iPhone
+[ ] Standard iPhone
+[ ] Pro
+[ ] Pro Max
+[ ] Dynamic Island device
+
+PLAYBACK:
+[ ] 30+ song changes
+[ ] Pause/Resume spam
+[ ] repeated seeks
+[ ] Next/Previous repeatedly
+[ ] Home
+[ ] Lock
+[ ] Unlock
+[ ] Control Center
+[ ] Bluetooth
+[ ] AirPods
+[ ] network switch
+[ ] phone call interruption
+
+SEARCH:
+[ ] fast typing
+[ ] slow network
+[ ] Arabic
+[ ] English
+[ ] mixed language
+[ ] typo
+[ ] suggestion tap
+[ ] direct result tap
+
+UI:
+[ ] long titles
+[ ] missing artwork
+[ ] empty queue
+[ ] 100+ queue items
+[ ] keyboard open
+[ ] reduced motion
+[ ] small screen
+[ ] large screen
+
+LONG SESSION:
+[ ] 30 minutes
+[ ] 2 hours
+[ ] 6+ hours
+
+======================================================================
+47. ROZZA'S FIVE SIGNATURE WORLDS
+======================================================================
+
+1. ROZZA FLOW
+   Endless personalized listening controlled by vibe.
+
+2. ROZZA LIVE
+   A beautiful visual music environment that reacts to the song.
+
+3. ROZZA BRAIN
+   Personalization, recommendations, AI queue intelligence, explanations.
+
+4. ROZZA EVENT
+   Wedding / party / event autonomous DJ system.
+
+5. ROZZA TOGETHER
+   Guests, requests, voting, Rooms, blends, reactions, shared listening.
+
+Everything new should fit naturally into one of these five worlds.
+
+======================================================================
+48. PRIORITY ORDER
+======================================================================
+
+PHASE 1 — MUST BE PERFECT
+1. Playback reliability
+2. Automatic Home/lock playback
+3. Instant search suggestion playback
+4. Search speed
+5. UI redesign
+6. Now Playing
+7. Mini-player
+8. Queue
+9. Performance
+10. Error recovery
+11. ROZZA Watchdog
+12. Session continuity
+
+PHASE 2 — MAKE IT ADDICTIVE
+13. Smart Queue
+14. Radio
+15. Personalization
+16. ROZZA Flow
+17. ROZZA Live
+18. Better Home recommendations
+19. Listening history
+20. Playlists
+21. Sharing
+22. Music Memory
+23. Discovery Swipe
+24. Taste DNA
+
+PHASE 3 — MAKE IT DIFFERENT
+25. AI Music Assistant
+26. AI Queue Doctor
+27. AI DJ / Set Director
+28. Wedding Mode
+29. Party QR
+30. Guest voting
+31. Energy Curve
+32. Entrance Mode
+33. Emergency DJ
+34. Language / Era Morph
+35. Event Dashboard
+36. ROZZA Together
+37. Crowd Mode
+
+PHASE 4 — ECOSYSTEM
+38. Dynamic Island / Live Activity
+39. Car Mode
+40. CarPlay
+41. Apple Watch
+42. Siri / Shortcuts
+43. Cross-device sync
+
+======================================================================
+49. FINAL VISION
+======================================================================
+
+ROZZA should feel:
+
+- instant
+- reliable
+- personal
+- beautiful
+- alive
+- smart
+- fun
+- premium
+- visual
+- expressive
+- easy for normal listeners
+- powerful for parties and events
+
+The goal is NOT:
+"another YouTube music frontend"
+
+The goal is:
+"A living music platform with its own intelligence, visual identity, social layer, and event brain."
+
+The experience should be memorable enough that someone sees ROZZA on another person's iPhone and asks:
+
+"What app is that?"

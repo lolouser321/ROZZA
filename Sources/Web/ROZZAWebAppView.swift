@@ -19,6 +19,7 @@ struct ROZZAWebAppView: UIViewRepresentable {
         configuration.defaultWebpagePreferences.allowsContentJavaScript = true
         configuration.userContentController.add(context.coordinator, name: "audioSession")
         configuration.userContentController.add(context.coordinator, name: "nowPlaying")
+        configuration.userContentController.add(context.coordinator, name: "haptics")
         // Install only the new background-only bridge. It is injected into
         // YouTube frames at document start but remains inert until the main
         // ROZZA state machine explicitly arms it during app backgrounding.
@@ -79,9 +80,21 @@ struct ROZZAWebAppView: UIViewRepresentable {
                 if action == "activate" { activateAudioSession() }
             } else if message.name == "nowPlaying", let dict = message.body as? [String: Any] {
                 dj?.updateNowPlaying(info: dict)
+            } else if message.name == "haptics" {
+                fireHaptic(message.body as? String ?? "light")
             } else if message.name == YouTubeMessengerBridge.handlerName,
                       let payload = message.body as? [String: Any] {
                 dj?.handleYouTubeMessengerEvent(payload)
+            }
+        }
+
+        private func fireHaptic(_ kind: String) {
+            switch kind {
+            case "selection": UISelectionFeedbackGenerator().selectionChanged()
+            case "medium": UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+            case "rigid": UIImpactFeedbackGenerator(style: .rigid).impactOccurred()
+            case "success": UINotificationFeedbackGenerator().notificationOccurred(.success)
+            default: UIImpactFeedbackGenerator(style: .light).impactOccurred()
             }
         }
 

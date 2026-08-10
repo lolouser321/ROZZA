@@ -2,6 +2,7 @@ import AVFoundation
 import Combine
 import Foundation
 import MediaPlayer
+import UIKit
 import WebKit
 
 @MainActor
@@ -28,6 +29,9 @@ final class DJPlaybackController: NSObject, ObservableObject {
     private var wasYouTubeReady = false
     private var resumeAVAfterInterruption = false
     private var resumeYouTubeAfterInterruption = false
+    private var resumeYouTubeAfterBackgroundTransition = false
+    private var backgroundResumeGeneration = 0
+    private var backgroundTaskID: UIBackgroundTaskIdentifier = .invalid
     private var statusTimer: Timer?
     private var observers: [NSObjectProtocol] = []
 
@@ -73,6 +77,19 @@ final class DJPlaybackController: NSObject, ObservableObject {
             if isYouTubePlaying != isPlaying {
                 isYouTubePlaying = isPlaying
                 updateNativePlaybackState(isPlaying: isPlaying, payload: payload)
+            }
+        case "BackgroundVideoPlaying":
+            _ = configureAudioSession()
+            isYouTubePlaying = true
+            updateNativePlaybackState(isPlaying: true, payload: payload)
+        case "BackgroundVideoPause":
+            // Do not immediately mark the Lock Screen as paused when the
+            // bridge says playback intent is still PLAY; a bounded recovery
+            // is already in flight. A user Pause changes shouldPlay=false.
+            let shouldPlay = payload["shouldPlay"] as? Bool ?? false
+            if !shouldPlay {
+                isYouTubePlaying = false
+                updateNativePlaybackState(isPlaying: false, payload: payload)
             }
         case "YouTubeFullscreen":
             if let state = payload["state"] as? String {
@@ -252,6 +269,48 @@ final class DJPlaybackController: NSObject, ObservableObject {
         }
     }
 
+    private func beginBackgroundTransitionTask() {
+        guard backgroundTaskID == .invalid else { return }
+        backgroundTaskID = UIApplication.shared.beginBackgroundTask(withName: "ROZZA.YouTubeBackgroundTransition") { [weak self] in
+            Task { @MainActor in self?.endBackgroundTransitionTask() }
+        }
+    }
+
+    private func endBackgroundTransitionTask() {
+        guard backgroundTaskID != .invalid else { return }
+        UIApplication.shared.endBackgroundTask(backgroundTaskID)
+        backgroundTaskID = .invalid
+    }
+
+    /// Replays the same explicit PLAY route that already works from Control
+    /// Center, but does it automatically during the short Home/lock transition.
+    /// The JS side re-checks current source + user intent on every attempt, so
+    /// a real user Pause always wins and a stale native callback cannot restart it.
+    private func scheduleBackgroundYouTubeResumeKicks(generation: Int) {
+        let delays: [Double] = [0.10, 0.42, 0.90]
+        for (index, delay) in delays.enumerated() {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                guard let self,
+                      generation == self.backgroundResumeGeneration,
+                      self.resumeYouTubeAfterBackgroundTransition else { return }
+                self.configureAudioSession()
+                let reason = "native-background-kick-\(index + 1)"
+                self.evaluateYouTube("""
+                (() => {
+                  if (!window.ROZZANativeControls || typeof window.ROZZANativeControls.backgroundResumeIfWanted !== 'function') return { requested:false, reason:'bridge-missing' };
+                  return window.ROZZANativeControls.backgroundResumeIfWanted('\(reason)');
+                })()
+                """) { result, error in
+                    print("[ROZZA NATIVE] Background auto-resume \(reason) result=", result ?? "nil", "error=", error?.localizedDescription ?? "none")
+                }
+            }
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) { [weak self] in
+            guard let self, generation == self.backgroundResumeGeneration else { return }
+            self.endBackgroundTransitionTask()
+        }
+    }
+
     private func observeAudioEvents() {
         let center = NotificationCenter.default
         observers.append(center.addObserver(forName: AVAudioSession.interruptionNotification, object: nil, queue: .main) { [weak self] note in
@@ -270,8 +329,27 @@ final class DJPlaybackController: NSObject, ObservableObject {
             print("[ROZZA NATIVE] App inactive — preparing background bridge")
             Task { @MainActor in
                 guard let self else { return }
+                // Capture PLAY intent before WebKit gets a chance to report the
+                // lifecycle PAUSE. This is intentionally a separate native flag;
+                // isYouTubePlaying may flip false milliseconds later.
+                self.resumeYouTubeAfterBackgroundTransition = self.isYouTubePlaying
+                self.backgroundResumeGeneration += 1
+                let generation = self.backgroundResumeGeneration
+                self.beginBackgroundTransitionTask()
                 try? ROZZAAudioSession.shared.configureAndActivateIfNeeded()
-                self.evaluateYouTube("if(window.ROZZANativeControls) window.ROZZANativeControls.backgroundPrepare();")
+                let nativeIntentWasPlaying = self.resumeYouTubeAfterBackgroundTransition
+                self.evaluateYouTube("if(window.ROZZANativeControls) window.ROZZANativeControls.backgroundPrepare();") { result, _ in
+                    let jsIntent = (result as? Bool) == true
+                    if jsIntent && !self.resumeYouTubeAfterBackgroundTransition {
+                        self.resumeYouTubeAfterBackgroundTransition = true
+                        self.scheduleBackgroundYouTubeResumeKicks(generation: generation)
+                    } else if !jsIntent && !nativeIntentWasPlaying {
+                        self.endBackgroundTransitionTask()
+                    }
+                }
+                if nativeIntentWasPlaying {
+                    self.scheduleBackgroundYouTubeResumeKicks(generation: generation)
+                }
             }
         })
         observers.append(center.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { [weak self] _ in
@@ -280,12 +358,22 @@ final class DJPlaybackController: NSObject, ObservableObject {
                 guard let self else { return }
                 try? ROZZAAudioSession.shared.configureAndActivateIfNeeded()
                 self.evaluateYouTube("if(window.ROZZANativeControls) window.ROZZANativeControls.background();")
+                // If willResignActive captured a playing YouTube session, make
+                // one immediate native kick too. The later bounded kicks are
+                // only transition insurance; JS user intent is checked each time.
+                if self.resumeYouTubeAfterBackgroundTransition {
+                    self.evaluateYouTube("if(window.ROZZANativeControls) window.ROZZANativeControls.backgroundResumeIfWanted('did-enter-background');")
+                }
             }
         })
         observers.append(center.addObserver(forName: UIApplication.willEnterForegroundNotification, object: nil, queue: .main) { [weak self] _ in
             print("[ROZZA NATIVE] App will enter foreground")
             Task { @MainActor in
-                self?.evaluateYouTube("if(window.ROZZANativeControls) window.ROZZANativeControls.foreground();")
+                guard let self else { return }
+                self.resumeYouTubeAfterBackgroundTransition = false
+                self.backgroundResumeGeneration += 1
+                self.endBackgroundTransitionTask()
+                self.evaluateYouTube("if(window.ROZZANativeControls) window.ROZZANativeControls.foreground();")
             }
         })
         // A second foreground signal is intentional: depending on when WebKit
@@ -294,7 +382,11 @@ final class DJPlaybackController: NSObject, ObservableObject {
         observers.append(center.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
             print("[ROZZA NATIVE] App active")
             Task { @MainActor in
-                self?.evaluateYouTube("if(window.ROZZANativeControls) window.ROZZANativeControls.foreground();")
+                guard let self else { return }
+                self.resumeYouTubeAfterBackgroundTransition = false
+                self.backgroundResumeGeneration += 1
+                self.endBackgroundTransitionTask()
+                self.evaluateYouTube("if(window.ROZZANativeControls) window.ROZZANativeControls.foreground();")
             }
         })
     }

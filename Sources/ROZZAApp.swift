@@ -9,7 +9,9 @@ struct ROZZAApp: App {
             ZStack(alignment: .topTrailing) {
                 ROZZAWebAppView(dj: dj)
                     .ignoresSafeArea()
+#if DEBUG
                 DJLauncherButton(controller: dj)
+#endif
             }
             .preferredColorScheme(.dark)
             .onAppear {
