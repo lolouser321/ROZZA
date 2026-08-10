@@ -30,37 +30,63 @@ xcodebuild \
   CODE_SIGN_IDENTITY='' \
   build
 
+# Every check below is silent-on-pass/silent-on-fail by design (test/cmp -s/
+# grep -q), which previously meant a failure produced zero diagnostic output
+# before set -e killed the script. Wrap each one so a failure always names
+# itself in the log instead of leaving a bare "exit code 1".
+check() {
+  local desc="$1"; shift
+  if "$@"; then
+    echo "  [OK]   $desc"
+  else
+    echo "  [FAIL] $desc"
+    exit 1
+  fi
+}
+check_cmp() {
+  local desc="$1" a="$2" b="$3"
+  if cmp -s "$a" "$b"; then
+    echo "  [OK]   $desc"
+  else
+    echo "  [FAIL] $desc"
+    echo "         $a: $(wc -c < "$a" 2>/dev/null || echo '?') bytes"
+    echo "         $b: $(wc -c < "$b" 2>/dev/null || echo '?') bytes"
+    cmp "$a" "$b" || true
+    exit 1
+  fi
+}
+
 APP_PATH="$(find "$WORK_DIR/DerivedData/Build/Products/Release-iphoneos" -maxdepth 1 -type d -name '*.app' -print -quit)"
-test -n "$APP_PATH"
-test -f "$APP_PATH/Info.plist"
-test -s "$APP_PATH/Assets.car"
-test -s "$APP_PATH/rozza2.html"
-test -s "$APP_PATH/yt_video_play_messenger.js"
-test -s "$APP_PATH/yt_background_bridge.js"
-test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleDisplayName' "$APP_PATH/Info.plist")" = "ROZZA"
-test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIconName' "$APP_PATH/Info.plist")" = "AppIcon"
-test "$(/usr/libexec/PlistBuddy -c 'Print :UIBackgroundModes:0' "$APP_PATH/Info.plist")" = "audio"
-test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP_PATH/Info.plist")" = "4.0.5"
-test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP_PATH/Info.plist")" = "25"
+check "app bundle found" test -n "$APP_PATH"
+check "Info.plist present" test -f "$APP_PATH/Info.plist"
+check "Assets.car present" test -s "$APP_PATH/Assets.car"
+check "rozza2.html present" test -s "$APP_PATH/rozza2.html"
+check "yt_video_play_messenger.js present" test -s "$APP_PATH/yt_video_play_messenger.js"
+check "yt_background_bridge.js present" test -s "$APP_PATH/yt_background_bridge.js"
+check "CFBundleDisplayName" test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleDisplayName' "$APP_PATH/Info.plist")" = "ROZZA"
+check "CFBundleIconName" test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIconName' "$APP_PATH/Info.plist")" = "AppIcon"
+check "UIBackgroundModes[0]" test "$(/usr/libexec/PlistBuddy -c 'Print :UIBackgroundModes:0' "$APP_PATH/Info.plist")" = "audio"
+check "CFBundleShortVersionString == 4.0.5" test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP_PATH/Info.plist")" = "4.0.5"
+check "CFBundleVersion == 25" test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP_PATH/Info.plist")" = "25"
 
 # Build 25 regression guard: make sure Xcode packaged the new foreground ->
 # native playback-intent handoff instead of a stale HTML or Swift build.
-cmp -s "$PROJECT_ROOT/rozza2.html" "$APP_PATH/rozza2.html"
-cmp -s "$PROJECT_ROOT/Resources/yt_background_bridge.js" "$APP_PATH/yt_background_bridge.js"
-grep -q "wantsPlayback: st.source==='youtube' ? !!YT.wantPlay : isPlaying" "$APP_PATH/rozza2.html"
-grep -q "window.ROZZANativeNetwork=ROZZANativeNetwork" "$APP_PATH/rozza2.html"
-grep -q "cmd(autoplay ? 'loadVideoById' : 'cueVideoById', \[id\])" "$APP_PATH/rozza2.html"
-grep -q "ROZZA_BACKGROUND_PULSE" "$APP_PATH/rozza2.html"
-grep -q "ROZZA_BACKGROUND_PULSE" "$APP_PATH/yt_background_bridge.js"
-grep -q "const MIRROR_POOL_VERSION = 4;" "$APP_PATH/rozza2.html"
-grep -q "pipedapi.orangenet.cc" "$APP_PATH/rozza2.html"
+check_cmp "packaged rozza2.html matches source" "$PROJECT_ROOT/rozza2.html" "$APP_PATH/rozza2.html"
+check_cmp "packaged yt_background_bridge.js matches source" "$PROJECT_ROOT/Resources/yt_background_bridge.js" "$APP_PATH/yt_background_bridge.js"
+check "background handoff wantsPlayback line" grep -q "wantsPlayback: st.source==='youtube' ? !!YT.wantPlay : isPlaying" "$APP_PATH/rozza2.html"
+check "native network fallback wired" grep -q "window.ROZZANativeNetwork=ROZZANativeNetwork" "$APP_PATH/rozza2.html"
+check "persistent YouTube player switch" grep -q "cmd(autoplay ? 'loadVideoById' : 'cueVideoById', \[id\])" "$APP_PATH/rozza2.html"
+check "background pulse event (HTML)" grep -q "ROZZA_BACKGROUND_PULSE" "$APP_PATH/rozza2.html"
+check "background pulse receiver (bridge JS)" grep -q "ROZZA_BACKGROUND_PULSE" "$APP_PATH/yt_background_bridge.js"
+check "mirror pool version 4" grep -q "const MIRROR_POOL_VERSION = 4;" "$APP_PATH/rozza2.html"
+check "current Piped seed present" grep -q "pipedapi.orangenet.cc" "$APP_PATH/rozza2.html"
 # `strings | grep -q` is unsafe under pipefail: grep -q exits as soon as it
 # finds a match, which can SIGPIPE `strings` mid-write ("failed to flush
 # output") and abort the whole script even though the match was found.
 # Capture to a file once so grep's exit status is the only one that matters.
 strings "$APP_PATH/ROZZA" > "$WORK_DIR/rozza-binary-strings.txt" || true
-grep -q "networkProxy" "$WORK_DIR/rozza-binary-strings.txt"
-grep -q "Background capture wantsPlayback=" "$WORK_DIR/rozza-binary-strings.txt"
+check "compiled binary contains networkProxy" grep -q "networkProxy" "$WORK_DIR/rozza-binary-strings.txt"
+check "compiled binary contains background-capture log line" grep -q "Background capture wantsPlayback=" "$WORK_DIR/rozza-binary-strings.txt"
 
 ditto "$APP_PATH" "$WORK_DIR/Payload/ROZZA.app"
 ditto -c -k --sequesterRsrc --keepParent "$WORK_DIR/Payload" "$OUTPUT_IPA"
