@@ -48,7 +48,12 @@ test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP_PATH/Info.plis
 cmp -s "$PROJECT_ROOT/rozza2.html" "$APP_PATH/rozza2.html"
 cmp -s "$PROJECT_ROOT/Resources/yt_background_bridge.js" "$APP_PATH/yt_background_bridge.js"
 grep -q "wantsPlayback: st.source==='youtube' ? !!YT.wantPlay : isPlaying" "$APP_PATH/rozza2.html"
-strings "$APP_PATH/ROZZA" | grep -q "Background capture wantsPlayback="
+# `strings | grep -q` is unsafe under pipefail: grep -q exits as soon as it
+# finds a match, which can SIGPIPE `strings` mid-write ("failed to flush
+# output") and abort the whole script even though the match was found.
+# Capture to a file first so grep's exit status is the only one that matters.
+strings "$APP_PATH/ROZZA" > "$WORK_DIR/rozza-binary-strings.txt" || true
+grep -q "Background capture wantsPlayback=" "$WORK_DIR/rozza-binary-strings.txt"
 
 ditto "$APP_PATH" "$WORK_DIR/Payload/ROZZA.app"
 ditto -c -k --sequesterRsrc --keepParent "$WORK_DIR/Payload" "$OUTPUT_IPA"
