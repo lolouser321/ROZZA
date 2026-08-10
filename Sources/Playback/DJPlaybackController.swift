@@ -29,6 +29,10 @@ final class DJPlaybackController: NSObject, ObservableObject {
     private var wasYouTubeReady = false
     private var resumeAVAfterInterruption = false
     private var resumeYouTubeAfterInterruption = false
+    // Authoritative foreground playback intent mirrored from rozza2.html.
+    // This must not depend on the background iframe bridge because that bridge
+    // is intentionally inert while the app is on screen.
+    private var youtubeWantsPlayback = false
     private var resumeYouTubeAfterBackgroundTransition = false
     private var backgroundResumeGeneration = 0
     private var backgroundTaskID: UIBackgroundTaskIdentifier = .invalid
@@ -78,8 +82,14 @@ final class DJPlaybackController: NSObject, ObservableObject {
                 isYouTubePlaying = isPlaying
                 updateNativePlaybackState(isPlaying: isPlaying, payload: payload)
             }
+        case "BackgroundIntent":
+            // The iframe bridge mirrors the JS user's explicit Play/Pause
+            // intent. Keep a native copy so Home/lock transition decisions do
+            // not wait on evaluateJavaScript after WebKit starts suspending.
+            youtubeWantsPlayback = payload["shouldPlay"] as? Bool ?? youtubeWantsPlayback
         case "BackgroundVideoPlaying":
             _ = configureAudioSession()
+            youtubeWantsPlayback = true
             isYouTubePlaying = true
             updateNativePlaybackState(isPlaying: true, payload: payload)
         case "BackgroundVideoPause":
@@ -88,6 +98,7 @@ final class DJPlaybackController: NSObject, ObservableObject {
             // is already in flight. A user Pause changes shouldPlay=false.
             let shouldPlay = payload["shouldPlay"] as? Bool ?? false
             if !shouldPlay {
+                youtubeWantsPlayback = false
                 isYouTubePlaying = false
                 updateNativePlaybackState(isPlaying: false, payload: payload)
             }
@@ -332,7 +343,14 @@ final class DJPlaybackController: NSObject, ObservableObject {
                 // Capture PLAY intent before WebKit gets a chance to report the
                 // lifecycle PAUSE. This is intentionally a separate native flag;
                 // isYouTubePlaying may flip false milliseconds later.
-                self.resumeYouTubeAfterBackgroundTransition = self.isYouTubePlaying
+                // Build 21 used only isYouTubePlaying here. That flag was fed
+                // by the background-only iframe bridge, which is deliberately
+                // inert during ordinary foreground playback, so it could still
+                // be false even while ROZZA was audibly playing YouTube. That
+                // prevented the automatic background resume kicks from being
+                // scheduled. Use the main player's mirrored user intent first.
+                self.resumeYouTubeAfterBackgroundTransition = self.youtubeWantsPlayback || self.isYouTubePlaying
+                print("[ROZZA NATIVE] Background capture wantsPlayback=", self.youtubeWantsPlayback, "isPlaying=", self.isYouTubePlaying, "resume=", self.resumeYouTubeAfterBackgroundTransition)
                 self.backgroundResumeGeneration += 1
                 let generation = self.backgroundResumeGeneration
                 self.beginBackgroundTransitionTask()
@@ -460,6 +478,19 @@ final class DJPlaybackController: NSObject, ObservableObject {
         }
         if let isPlaying = info["isPlaying"] as? Bool {
             nowPlayingInfo[MPNowPlayingInfoPropertyPlaybackRate] = isPlaying ? 1.0 : 0.0
+
+            // Main ROZZA -> native playback state handoff. The old Build 21
+            // updated Lock Screen metadata here but never updated
+            // isYouTubePlaying/youtubeWantsPlayback, leaving native lifecycle
+            // code blind until the background-only bridge woke up.
+            let source = (info["source"] as? String)?.lowercased()
+            if source == "youtube" {
+                isYouTubePlaying = isPlaying
+                youtubeWantsPlayback = info["wantsPlayback"] as? Bool ?? isPlaying
+            } else if source != nil {
+                isYouTubePlaying = false
+                youtubeWantsPlayback = false
+            }
         }
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nowPlayingInfo
     }
@@ -484,6 +515,7 @@ final class DJPlaybackController: NSObject, ObservableObject {
         center.playCommand.addTarget { [weak self] _ in
             print("[ROZZA NATIVE] Remote command: play")
             Task { @MainActor in
+                self?.youtubeWantsPlayback = true
                 self?.configureAudioSession()
                 self?.evaluateYouTube("if(window.ROZZANativeControls) { window.ROZZANativeControls.play(); }")
                 if self?.avPlayer.currentItem != nil { self?.playAVPlayer() }
@@ -495,6 +527,7 @@ final class DJPlaybackController: NSObject, ObservableObject {
         center.pauseCommand.addTarget { [weak self] _ in
             print("[ROZZA NATIVE] Remote command: pause")
             Task { @MainActor in
+                self?.youtubeWantsPlayback = false
                 self?.evaluateYouTube("if(window.ROZZANativeControls) { window.ROZZANativeControls.pause(); }")
                 self?.pauseAVPlayer(reason: "Lockscreen pause")
             }

@@ -19,11 +19,11 @@ if dups: errors.append('duplicate HTML ids: '+', '.join(dups))
 for rid in ['app','tabbar','searchInput','results','minibar','npSheet','queueSheet','eventSheet','flowEnergy','likedTracks']:
     if rid not in seen: errors.append('missing required HTML id: '+rid)
 if 'const DEBUG = false;' not in html: errors.append('production HTML DEBUG must be false')
-if 'ROZZA 4.0.1 · GOLD' not in html: errors.append('wrong visible version label')
+if 'ROZZA 4.0.2 · BG HOTFIX' not in html: errors.append('wrong visible version label')
 if 'state.active=false;' not in html: errors.append('Flow failure rollback missing')
 if "const existing=Q.items.findIndex(x=>trackKey(x)===trackKey(it))" not in html: errors.append('event backup de-duplication missing')
 proj=(root/'project.yml').read_text()
-for token in ['MARKETING_VERSION: 4.0.1','CURRENT_PROJECT_VERSION: 21','Resources/yt_background_bridge.js','path: rozza2.html']:
+for token in ['MARKETING_VERSION: 4.0.2','CURRENT_PROJECT_VERSION: 22','Resources/yt_background_bridge.js','path: rozza2.html']:
     if token not in proj: errors.append('project.yml missing: '+token)
 app=(root/'Sources/ROZZAApp.swift').read_text()
 if '#if DEBUG' not in app or 'DJLauncherButton(controller: dj)' not in app: errors.append('DJ test launcher is not DEBUG-gated')

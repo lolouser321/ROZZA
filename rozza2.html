@@ -755,7 +755,7 @@ html,body{background:#050507}
             <div class="set-row"><div class="sl">Reset source cache</div><button class="text-action" id="clrMirrors">Reset</button></div>
           </div>
           <div class="settings-group"><div class="settings-label">Support</div><div class="set-row"><div><div class="sl">Playback diagnostics</div><div class="sd">Copy a private technical timeline when something fails</div></div><button class="text-action" id="copyDiagnosticsBtn">Copy</button></div></div>
-          <div class="ver">ROZZA 4.0.1 · GOLD</div>
+          <div class="ver">ROZZA 4.0.2 · BG HOTFIX</div>
         </section>
       </main>
 
@@ -1342,7 +1342,9 @@ function postNowPlayingToNative(){
       artist: current.artist || 'ROZZA',
       duration: duration || 0,
       elapsed: elapsed || 0,
-      isPlaying: isPlaying
+      isPlaying: isPlaying,
+      source: st.source || current.source || '',
+      wantsPlayback: st.source==='youtube' ? !!YT.wantPlay : isPlaying
     });
   } catch(_) {}
 }
