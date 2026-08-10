@@ -33,6 +33,8 @@ final class DJPlaybackController: NSObject, ObservableObject {
     // This must not depend on the background iframe bridge because that bridge
     // is intentionally inert while the app is on screen.
     private var youtubeWantsPlayback = false
+    private var activePlaybackSource = ""
+    private var hardUserPauseActive = false
     private var resumeYouTubeAfterBackgroundTransition = false
     private var backgroundResumeGeneration = 0
     private var backgroundTaskID: UIBackgroundTaskIdentifier = .invalid
@@ -82,29 +84,51 @@ final class DJPlaybackController: NSObject, ObservableObject {
 
         switch event {
         case "VideoPlay":
-            _ = configureAudioSession()
-            isYouTubePlaying = true
-            updateNativePlaybackState(isPlaying: true, payload: payload)
+            if hardUserPauseActive || !youtubeWantsPlayback {
+                isYouTubePlaying = false
+                enforcePausedTransportAfterHumanPause(reason: "stale-video-play")
+            } else {
+                _ = configureAudioSession()
+                isYouTubePlaying = true
+                updateNativePlaybackState(isPlaying: true, payload: payload)
+            }
         case "VideoPause":
             isYouTubePlaying = false
             updateNativePlaybackState(isPlaying: false, payload: payload)
         case "VideoIsPlaying":
-            let isPlaying = (payload["paused"] as? Bool) == false
-            if isPlaying { _ = configureAudioSession() }
-            if isYouTubePlaying != isPlaying {
-                isYouTubePlaying = isPlaying
-                updateNativePlaybackState(isPlaying: isPlaying, payload: payload)
+            let reportedPlaying = (payload["paused"] as? Bool) == false
+            let effectivePlaying = reportedPlaying && youtubeWantsPlayback && !hardUserPauseActive
+            if effectivePlaying { _ = configureAudioSession() }
+            if reportedPlaying && !effectivePlaying {
+                enforcePausedTransportAfterHumanPause(reason: "stale-video-is-playing")
+            }
+            if isYouTubePlaying != effectivePlaying {
+                isYouTubePlaying = effectivePlaying
+                updateNativePlaybackState(isPlaying: effectivePlaying, payload: payload)
             }
         case "BackgroundIntent":
-            // The iframe bridge mirrors the JS user's explicit Play/Pause
-            // intent. Keep a native copy so Home/lock transition decisions do
-            // not wait on evaluateJavaScript after WebKit starts suspending.
-            youtubeWantsPlayback = payload["shouldPlay"] as? Bool ?? youtubeWantsPlayback
+            // Intent messages may also be emitted by automatic lifecycle sync.
+            // A hard system/user Pause is authoritative until a real explicit
+            // Play/Next/Previous command or main-player handoff clears it.
+            let shouldPlay = payload["shouldPlay"] as? Bool ?? youtubeWantsPlayback
+            let reason = (payload["reason"] as? String ?? "").lowercased()
+            if !shouldPlay {
+                youtubeWantsPlayback = false
+                hardUserPauseActive = reason.contains("explicit-pause") || reason.contains("human") || reason.contains("remote") || hardUserPauseActive
+            } else if !hardUserPauseActive {
+                youtubeWantsPlayback = true
+            }
         case "BackgroundVideoPlaying":
             _ = configureAudioSession()
-            youtubeWantsPlayback = true
-            isYouTubePlaying = true
-            updateNativePlaybackState(isPlaying: true, payload: payload)
+            // Observation is NOT intent. A delayed automatic recovery event
+            // must never turn a human Pause back into Play.
+            if youtubeWantsPlayback && !hardUserPauseActive {
+                isYouTubePlaying = true
+                updateNativePlaybackState(isPlaying: true, payload: payload)
+            } else {
+                isYouTubePlaying = false
+                enforcePausedTransportAfterHumanPause(reason: "stale-background-playing")
+            }
         case "BackgroundVideoPause":
             // Do not immediately mark the Lock Screen as paused when the
             // bridge says playback intent is still PLAY; a bounded recovery
@@ -116,13 +140,16 @@ final class DJPlaybackController: NSObject, ObservableObject {
                 updateNativePlaybackState(isPlaying: false, payload: payload)
             }
         case "BackgroundPulse":
-            // A native transition kick asks the iframe bridge to inspect the
-            // real <video>, not just the outer YouTube widget state.
+            // Pulse reports transport state only; it cannot create user intent.
             if (payload["paused"] as? Bool) == false {
-                _ = configureAudioSession()
-                youtubeWantsPlayback = true
-                isYouTubePlaying = true
-                updateNativePlaybackState(isPlaying: true, payload: payload)
+                if youtubeWantsPlayback && !hardUserPauseActive {
+                    _ = configureAudioSession()
+                    isYouTubePlaying = true
+                    updateNativePlaybackState(isPlaying: true, payload: payload)
+                } else {
+                    isYouTubePlaying = false
+                    enforcePausedTransportAfterHumanPause(reason: "stale-background-pulse")
+                }
             }
         case "YouTubeFullscreen":
             if let state = payload["state"] as? String {
@@ -328,18 +355,66 @@ final class DJPlaybackController: NSObject, ObservableObject {
         remoteCommandTaskID = .invalid
     }
 
+    private func registerExplicitPlaybackIntent(shouldPlay: Bool, reason: String) {
+        youtubeWantsPlayback = shouldPlay
+        if shouldPlay {
+            hardUserPauseActive = false
+            _ = configureAudioSession()
+        } else {
+            // Human/system Pause is a hard fence: cancel every lifecycle resume
+            // generation and interruption resume captured before the button tap.
+            hardUserPauseActive = true
+            isYouTubePlaying = false
+            resumeYouTubeAfterBackgroundTransition = false
+            resumeYouTubeAfterInterruption = false
+            backgroundResumeGeneration += 1
+            endBackgroundTransitionTask()
+            var info = MPNowPlayingInfoCenter.default().nowPlayingInfo ?? [:]
+            info[MPNowPlayingInfoPropertyPlaybackRate] = 0.0
+            MPNowPlayingInfoCenter.default().nowPlayingInfo = info
+        }
+        print("[ROZZA INTENT] explicit \(shouldPlay ? "PLAY" : "PAUSE") reason=\(reason)")
+    }
+
+    private func enforcePausedTransportAfterHumanPause(reason: String) {
+        guard hardUserPauseActive, !youtubeWantsPlayback else { return }
+        evaluateYouTube("if(window.ROZZANativeControls && window.ROZZANativeControls.enforceHumanPause) window.ROZZANativeControls.enforceHumanPause('\(reason)');")
+    }
+
     /// System controls (car, Bluetooth, AirPods, Lock Screen and Control Center)
     /// can arrive while the WKWebView is already backgrounded. Give each
     /// transport request a short native execution window and require a JS-side
     /// acknowledgement. A failed/delayed evaluateJavaScript gets only two
     /// bounded retries; commands are never turned into a permanent polling loop.
     private func dispatchRemoteCommand(_ action: String, value: Double? = nil, shouldPlay: Bool? = nil) {
+        var resolvedAction = action
+        var resolvedShouldPlay = shouldPlay
+        // Some cars/accessories send only togglePlayPauseCommand. Resolve that
+        // against explicit intent, not a possibly stale WebKit playerState.
+        if action == "toggle", activePlaybackSource == "youtube" {
+            let shouldPause = youtubeWantsPlayback || isYouTubePlaying
+            resolvedAction = shouldPause ? "pause" : "play"
+            resolvedShouldPlay = !shouldPause
+        }
         remoteCommandGeneration += 1
         let generation = remoteCommandGeneration
-        if let shouldPlay { youtubeWantsPlayback = shouldPlay }
-        if shouldPlay == true { _ = configureAudioSession() }
+        if let resolvedShouldPlay {
+            registerExplicitPlaybackIntent(shouldPlay: resolvedShouldPlay, reason: "remote-\(resolvedAction)")
+        }
         beginRemoteCommandTask()
-        performRemoteCommand(action, value: value, generation: generation, attempt: 0)
+        performRemoteCommand(resolvedAction, value: value, generation: generation, attempt: 0)
+        if resolvedShouldPlay == false && activePlaybackSource == "youtube" {
+            // Guard against a delayed lifecycle recovery that was already queued
+            // before the human pressed Pause. Each check aborts instantly if the
+            // person presses Play again, so this can never fight fresh intent.
+            [0.06, 0.24, 0.72].forEach { delay in
+                DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                    guard let self, generation == self.remoteCommandGeneration,
+                          self.hardUserPauseActive, !self.youtubeWantsPlayback else { return }
+                    self.enforcePausedTransportAfterHumanPause(reason: "native-human-pause-fence")
+                }
+            }
+        }
         DispatchQueue.main.asyncAfter(deadline: .now() + 2.2) { [weak self] in
             guard let self, generation == self.remoteCommandGeneration else { return }
             self.endRemoteCommandTask()
@@ -572,6 +647,8 @@ final class DJPlaybackController: NSObject, ObservableObject {
             lastNowPlayingTrackID = nil
             isYouTubePlaying = false
             youtubeWantsPlayback = false
+            hardUserPauseActive = false
+            activePlaybackSource = ""
             MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
             return
         }
@@ -615,39 +692,75 @@ final class DJPlaybackController: NSObject, ObservableObject {
             // Main ROZZA -> native playback state handoff. This remains the
             // authoritative source for lifecycle + remote-command intent.
             let source = (info["source"] as? String)?.lowercased()
+            activePlaybackSource = source ?? activePlaybackSource
             if source == "youtube" {
-                isYouTubePlaying = isPlaying
-                youtubeWantsPlayback = info["wantsPlayback"] as? Bool ?? isPlaying
+                let reportedIntent = info["wantsPlayback"] as? Bool ?? isPlaying
+                if !reportedIntent {
+                    youtubeWantsPlayback = false
+                    isYouTubePlaying = false
+                } else if !hardUserPauseActive || UIApplication.shared.applicationState == .active {
+                    // In foreground, a new main-player PLAY is a real user/app
+                    // action and may clear a previous Lock Screen hard pause.
+                    hardUserPauseActive = false
+                    youtubeWantsPlayback = true
+                    isYouTubePlaying = isPlaying
+                } else {
+                    // While backgrounded, stale recovery metadata is never
+                    // allowed to clear a hard remote Pause.
+                    youtubeWantsPlayback = false
+                    isYouTubePlaying = false
+                }
             } else if source != nil {
                 isYouTubePlaying = false
                 youtubeWantsPlayback = false
+                hardUserPauseActive = false
             }
         }
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nowPlayingInfo
 
-        if let artworkURL = info["artworkURL"] as? String, !artworkURL.isEmpty {
-            updateNowPlayingArtwork(urlString: artworkURL)
+        let artworkURLs = (info["artworkCandidates"] as? [String]) ?? ((info["artworkURL"] as? String).map { [$0] } ?? [])
+        if !artworkURLs.isEmpty {
+            updateNowPlayingArtwork(urlStrings: artworkURLs)
         }
     }
 
-    private func updateNowPlayingArtwork(urlString: String) {
-        guard urlString != lastArtworkURL,
-              let url = URL(string: urlString),
-              let scheme = url.scheme?.lowercased(),
-              scheme == "https" else { return }
-        lastArtworkURL = urlString
+    private func updateNowPlayingArtwork(urlStrings: [String]) {
+        var seenArtworkURLs = Set<String>()
+        let candidates = urlStrings.filter { !$0.isEmpty && seenArtworkURLs.insert($0).inserted }
+        guard let first = candidates.first, first != lastArtworkURL else { return }
+        lastArtworkURL = first
         artworkTask?.cancel()
-        artworkTask = URLSession.shared.dataTask(with: url) { [weak self] data, _, _ in
-            guard let data, let image = UIImage(data: data) else { return }
-            DispatchQueue.main.async {
-                guard let self, self.lastArtworkURL == urlString else { return }
-                let artwork = MPMediaItemArtwork(boundsSize: image.size) { _ in image }
-                var info = MPNowPlayingInfoCenter.default().nowPlayingInfo ?? [:]
-                info[MPMediaItemPropertyArtwork] = artwork
-                MPNowPlayingInfoCenter.default().nowPlayingInfo = info
+
+        func attempt(_ index: Int) {
+            guard index < candidates.count,
+                  self.lastArtworkURL == first,
+                  let url = URL(string: candidates[index]),
+                  url.scheme?.lowercased() == "https" else { return }
+            var request = URLRequest(url: url)
+            request.cachePolicy = .returnCacheDataElseLoad
+            request.timeoutInterval = 8
+            self.artworkTask = URLSession.shared.dataTask(with: request) { [weak self] data, response, _ in
+                guard let self else { return }
+                let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+                guard let data, status == 0 || (200..<300).contains(status), let image = UIImage(data: data), image.size.width >= 480 else {
+                    DispatchQueue.main.async { attempt(index + 1) }
+                    return
+                }
+                DispatchQueue.main.async {
+                    guard self.lastArtworkURL == first else { return }
+                    let artwork = MPMediaItemArtwork(boundsSize: image.size) { requestedSize in
+                        // iOS can request multiple sizes; returning the original
+                        // high-resolution image avoids an early lossy resize.
+                        image
+                    }
+                    var info = MPNowPlayingInfoCenter.default().nowPlayingInfo ?? [:]
+                    info[MPMediaItemPropertyArtwork] = artwork
+                    MPNowPlayingInfoCenter.default().nowPlayingInfo = info
+                }
             }
+            self.artworkTask?.resume()
         }
-        artworkTask?.resume()
+        attempt(0)
     }
 
     private func updateNativePlaybackState(isPlaying: Bool, payload: [String: Any]) {

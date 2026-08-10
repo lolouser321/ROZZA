@@ -66,12 +66,12 @@ check "yt_background_bridge.js present" test -s "$APP_PATH/yt_background_bridge.
 check "CFBundleDisplayName" test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleDisplayName' "$APP_PATH/Info.plist")" = "ROZZA"
 check "CFBundleIconName" test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIconName' "$APP_PATH/Info.plist")" = "AppIcon"
 check "UIBackgroundModes[0]" test "$(/usr/libexec/PlistBuddy -c 'Print :UIBackgroundModes:0' "$APP_PATH/Info.plist")" = "audio"
-check "CFBundleShortVersionString == 4.1.1" test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP_PATH/Info.plist")" = "4.1.1"
-check "CFBundleVersion == 27" test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP_PATH/Info.plist")" = "27"
+check "CFBundleShortVersionString == 4.1.2" test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP_PATH/Info.plist")" = "4.1.2"
+check "CFBundleVersion == 28" test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP_PATH/Info.plist")" = "28"
 
-# Build 27 regression guard: make sure Xcode packaged the new foreground ->
-# native playback-intent handoff, Drive Mode, and artwork-signature work
-# instead of a stale HTML or Swift build.
+# Build 28 regression guard: make sure Xcode packaged the new foreground ->
+# native playback-intent handoff, Drive Mode, artwork-signature, and hard
+# human-pause fence work instead of a stale HTML or Swift build.
 check_cmp "packaged rozza2.html matches source" "$PROJECT_ROOT/rozza2.html" "$APP_PATH/rozza2.html"
 check_cmp "packaged yt_background_bridge.js matches source" "$PROJECT_ROOT/Resources/yt_background_bridge.js" "$APP_PATH/yt_background_bridge.js"
 check "background handoff wantsPlayback line" grep -q "wantsPlayback: st.source==='youtube' ? !!YT.wantPlay : isPlaying" "$APP_PATH/rozza2.html"
@@ -89,6 +89,9 @@ check "native queue-index metadata" grep -q "queueIndex: Math.max(0,Q.idx)" "$AP
 check "Drive Mode sheet present" grep -q 'id="driveSheet"' "$APP_PATH/rozza2.html"
 check "artwork cover element present" grep -q 'id="ytArtworkCover"' "$APP_PATH/rozza2.html"
 check "ROZZA signature present" grep -q 'rozza-signature' "$APP_PATH/rozza2.html"
+check "HD artwork candidate chain" grep -q "maxresdefault.jpg" "$APP_PATH/rozza2.html"
+check "HD artwork loader wired" grep -q "loadBestArtworkImage" "$APP_PATH/rozza2.html"
+check "intent-preserving resume path" grep -q "YT.resume(reason)" "$APP_PATH/rozza2.html"
 if grep -q "This video can’t be embedded right now." "$APP_PATH/rozza2.html"; then
   echo "  [FAIL] legacy embed-error copy removed"
   exit 1
@@ -101,16 +104,16 @@ check "continuous playback default" grep -q "continuousPlayback:true" "$APP_PATH
 # output") and abort the whole script even though the match was found.
 # Capture to a file once so grep's exit status is the only one that matters.
 #
-# Only ONE compiled-binary string check is kept, and only because it's long
-# enough (34 bytes) to be reliable: Swift's small-string optimization can
-# encode literals under ~15 bytes as a packed inline value with no
-# byte-contiguous representation at all, so `strings` legitimately cannot
-# find short literals like "networkProxy" (12 bytes), "ROZZA.RemoteCommand"
-# alone, or "remote-native-" (14 bytes) even when the code is compiled in and
-# working correctly. Everything those would have checked is already covered
-# reliably by qa-source.py's source-level greps.
+# Only string literals long enough (>~15 bytes) to survive Swift's
+# small-string optimization intact are checked against the compiled binary:
+# short literals like "networkProxy"/"remote-native-" and bare identifiers
+# like "hardUserPauseActive" (property names aren't string data at all, so
+# they were never going to appear in `strings` output regardless of length)
+# are dropped here. qa-source.py's source-level greps already cover all of
+# these reliably.
 strings "$APP_PATH/ROZZA" > "$WORK_DIR/rozza-binary-strings.txt" || true
 check "compiled binary contains background-capture log line" grep -q "Background capture wantsPlayback=" "$WORK_DIR/rozza-binary-strings.txt"
+check "compiled binary contains native pause-fence reason string" grep -q "native-human-pause-fence" "$WORK_DIR/rozza-binary-strings.txt"
 
 ditto "$APP_PATH" "$WORK_DIR/Payload/ROZZA.app"
 ditto -c -k --sequesterRsrc --keepParent "$WORK_DIR/Payload" "$OUTPUT_IPA"

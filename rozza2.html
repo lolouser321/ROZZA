@@ -412,12 +412,12 @@ html,body{background:#050507}
 .minibar{position:absolute;left:12px;right:12px;bottom:calc(76px + env(safe-area-inset-bottom));z-index:65;margin:0;height:66px;padding:8px 8px 8px 9px;border-radius:22px;background:rgba(22,24,31,.9);border:1px solid rgba(255,255,255,.11);backdrop-filter:blur(28px) saturate(150%);box-shadow:0 18px 48px rgba(0,0,0,.38);gap:10px}.minibar .mb-art{width:49px;height:49px;border-radius:15px}.minibar .mb-t{font-size:12.5px;font-weight:700}.minibar .mb-a{font-size:10.5px;color:#898b95}.minibar .mb-eq{display:none!important}.minibar .mb-btn{width:38px;height:38px;border-radius:13px}.minibar #mbPlay{background:#f2f2f5;color:#090a0c}.minibar #mbNext{margin-left:-4px}.minibar .mb-prog{height:2px;background:linear-gradient(90deg,#a992ff,#62dfff,#7cefc8)}
 .tabbar{position:absolute;z-index:64;left:12px;right:12px;bottom:calc(8px + env(safe-area-inset-bottom));height:62px;padding:6px;border:1px solid rgba(255,255,255,.09);border-radius:22px;background:rgba(17,19,25,.88);backdrop-filter:blur(28px) saturate(145%);box-shadow:0 18px 48px rgba(0,0,0,.32)}.tabbar button{gap:2px;padding:6px 0;border-radius:16px}.tabbar button svg{width:20px;height:20px}.tabbar button span{font-size:9px}.tabbar button.on{background:rgba(255,255,255,.07);color:#fff}.tabbar button.on svg{color:#a995ff;filter:none}
 .sheet-backdrop{background:rgba(0,0,0,.48);backdrop-filter:blur(8px)}.sheet{max-height:96%;border-radius:30px 30px 0 0;background:#0b0c10;border-top:1px solid rgba(255,255,255,.11);box-shadow:0 -30px 90px rgba(0,0,0,.58)}.sheet-head{padding:8px 18px 10px}.sheet-head .sh-t{font:700 12px var(--body);letter-spacing:0;text-transform:none;color:#bfc0c8}.sheet-head .sh-t .live{display:none}.sheet-head .sh-x{background:rgba(255,255,255,.07);color:#a5a7b0}.sheet-body{padding:0 18px calc(28px + env(safe-area-inset-bottom))}.np-bg{filter:blur(76px) saturate(140%) brightness(.28);opacity:.55!important}.np-topline{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}.np-src{font:700 9px var(--body);letter-spacing:.04em;text-transform:uppercase;background:rgba(255,255,255,.07);border:0;padding:6px 9px}.np-src.youtube{color:#ff9eab}.np-queue-pill{height:30px;padding:0 10px;border-radius:11px;background:rgba(255,255,255,.07);font-size:10px;color:#b1b3bd}.np-visual{position:relative;width:100%;margin:0 auto 18px}.np-art-panel{aspect-ratio:1/1;width:min(78vw,330px);margin:auto;border-radius:27px;background-size:cover;background-position:center;box-shadow:0 30px 80px rgba(0,0,0,.52);position:relative;overflow:hidden}.np-art-shine{position:absolute;inset:0;background:linear-gradient(135deg,rgba(255,255,255,.16),transparent 27%,transparent 70%,rgba(255,255,255,.05));pointer-events:none}.np-visual.youtube-mode #ytSlot{display:block!important;aspect-ratio:16/9;width:100%;margin:0;border-radius:22px;border:0;background:#000;box-shadow:0 26px 70px rgba(0,0,0,.48)}
-/* Build 27 — the user-facing Now Playing surface is artwork-first. The real
+/* Build 28 — the user-facing Now Playing surface is HD artwork-first. The real
    YouTube iframe stays mounted underneath for playback, but ROZZA paints the
    track artwork above it so embed-error chrome never becomes the visual. */
 #ytArtworkCover{display:none;position:fixed;pointer-events:none;overflow:hidden;background:#08090d;box-shadow:0 26px 70px rgba(0,0,0,.48);isolation:isolate}
 #ytArtworkCover.show{display:block}
-#ytArtworkCover img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;object-position:center;transform:scale(1.01)}
+#ytArtworkCover img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;object-position:center;transform:scale(1.005);image-rendering:auto;-webkit-user-drag:none}
 #ytArtworkCover::after{content:'';position:absolute;inset:0;background:linear-gradient(180deg,rgba(0,0,0,.02) 45%,rgba(0,0,0,.28) 100%);z-index:1}
 .rozza-signature{position:absolute;right:12px;bottom:10px;z-index:2;display:flex;align-items:center;gap:7px;padding:6px 9px;border-radius:999px;background:rgba(7,8,12,.46);border:1px solid rgba(255,255,255,.12);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);box-shadow:0 8px 24px rgba(0,0,0,.25)}
 .rozza-signature .sig-wave{display:flex;align-items:center;gap:2px;height:12px}.rozza-signature .sig-wave i{display:block;width:2px;border-radius:2px;background:linear-gradient(180deg,#ff78a0,#a894ff,#6fe9d0)}
@@ -778,7 +778,7 @@ html,body{background:#050507}
             <div class="set-row"><div><div class="sl">Vehicle controls</div><div class="sd" id="vehicleControlStatus">Ready · waiting for a command</div></div><button class="text-action" id="copyVehicleDiagnosticsBtn">Copy</button></div>
             <div class="set-row"><div><div class="sl">Playback diagnostics</div><div class="sd">Copy a private technical timeline when something fails</div></div><button class="text-action" id="copyDiagnosticsBtn">Copy</button></div>
           </div>
-          <div class="ver">ROZZA 4.1.1 · ARTWORK SIGNATURE</div>
+          <div class="ver">ROZZA 4.1.2 · HD SMART PAUSE</div>
         </section>
       </main>
 
@@ -1221,19 +1221,69 @@ function raceFor(promises, isValid){
 
 /* ---------------- normalization ---------------- */
 function ytIdFromUrl(u){ const m = (u||'').match(/[?&]v=([A-Za-z0-9_-]{11})/); return m ? m[1] : null; }
+// Build 28: Now Playing never has to settle for the small search thumbnail.
+// YouTube's search APIs commonly hand back ~320/480 px images even when the
+// video has a 720p/1080p thumbnail. Prefer the canonical high-resolution
+// i.ytimg endpoints and degrade only when the image itself proves unavailable.
+function artworkCandidates(it){
+  if(!it) return [FALLBACK_ART];
+  const out=[];
+  const push=u=>{ if(u && !out.includes(u)) out.push(u); };
+  if(it.source==='youtube'){
+    const id=it.videoId||it.id;
+    if(id && /^[A-Za-z0-9_-]{11}$/.test(id)){
+      push('https://i.ytimg.com/vi/'+encodeURIComponent(id)+'/maxresdefault.jpg');
+      push('https://i.ytimg.com/vi/'+encodeURIComponent(id)+'/sddefault.jpg');
+    }
+  }
+  // A provider thumbnail may already be high-resolution, so try it before
+  // falling all the way back to YouTube's 480px HQ endpoint.
+  push(it.thumbnailURL);
+  if(it.source==='youtube'){
+    const id=it.videoId||it.id;
+    if(id && /^[A-Za-z0-9_-]{11}$/.test(id)) push('https://i.ytimg.com/vi/'+encodeURIComponent(id)+'/hqdefault.jpg');
+  }
+  push(FALLBACK_ART);
+  return out;
+}
+function bestArtworkURL(it){ return (it && (it._resolvedArtworkURL||it.thumbnailURL)) || artworkCandidates(it)[0] || FALLBACK_ART; }
+function loadBestArtworkImage(img,it){
+  if(!img) return;
+  const key=trackKey(it)+'|hd';
+  if(img.dataset.artKey===key && img.currentSrc) return;
+  img.dataset.artKey=key;
+  const list=artworkCandidates(it);
+  let i=0;
+  const tryNext=()=>{
+    if(img.dataset.artKey!==key) return;
+    const src=list[i++] || FALLBACK_ART;
+    img.onload=()=>{
+      // maxres/sd endpoints can occasionally return a tiny placeholder with a
+      // successful HTTP status. Reject that too instead of stretching it.
+      if(img.dataset.artKey!==key) return;
+      const isRemoteYT=/i\.ytimg\.com\/vi\//.test(src);
+      const candidateIndex=i-1;
+      if(isRemoteYT && candidateIndex<2 && i<list.length && (img.naturalWidth<600 || img.naturalHeight<330)){ tryNext(); return; }
+      if(it) it._resolvedArtworkURL=src;
+    };
+    img.onerror=()=>{ if(i<list.length) tryNext(); else { img.onerror=null; img.src=FALLBACK_ART; } };
+    img.src=src;
+  };
+  tryNext();
+}
 function normPipedItem(it){
   const id = ytIdFromUrl(it.url) || (it.url||'').replace('/watch?v=','');
   if(!id || !/^[A-Za-z0-9_-]{11}$/.test(id)) return null;
   const dur = (typeof it.duration === 'number' && it.duration > 0) ? it.duration : null;
   return { id, title: it.title||'Untitled', artist: it.uploaderName||it.uploader||null,
-    thumbnailURL: it.thumbnail || ('https://i.ytimg.com/vi/'+id+'/hqdefault.jpg'),
+    thumbnailURL: it.thumbnail || ('https://i.ytimg.com/vi/'+id+'/maxresdefault.jpg'),
     duration: dur, viewCount: it.views||0, publishedText: it.uploaded ? relFromMs(it.uploaded) : (it.uploadedDate||null), source:'youtube' };
 }
 function normInvItem(it){
   const id = it.videoId; if(!id) return null;
   const th = (it.videoThumbnails||[]).find(t => /medium|hqdefault|mqdefault/i.test(t.url||'')) || (it.videoThumbnails||[])[0];
   return { id, title: it.title||'Untitled', artist: it.author||null,
-    thumbnailURL: (th && th.url) || ('https://i.ytimg.com/vi/'+id+'/hqdefault.jpg'),
+    thumbnailURL: (th && th.url) || ('https://i.ytimg.com/vi/'+id+'/maxresdefault.jpg'),
     duration: (typeof it.lengthSeconds === 'number' && it.lengthSeconds>0) ? it.lengthSeconds : null,
     viewCount: it.viewCount||0, publishedText: it.publishedText||null, source:'youtube' };
 }
@@ -1344,14 +1394,14 @@ async function lookupVideo(id){
     if(m.k==='piped'){
       const j = await mirrorGet(m, `/streams/${id}`, 6000);
       return { id, title:j.title||('YouTube '+id), artist:j.uploader||null,
-        thumbnailURL: j.thumbnail||('https://i.ytimg.com/vi/'+id+'/hqdefault.jpg'),
+        thumbnailURL: j.thumbnail||('https://i.ytimg.com/vi/'+id+'/maxresdefault.jpg'),
         duration:(typeof j.duration==='number'&&j.duration>0)?j.duration:null, viewCount:j.views||0,
         publishedText: j.uploaded?relFromMs(j.uploaded):null, source:'youtube' };
     } else {
       const j = await mirrorGet(m, `/api/v1/videos/${id}`, 6000);
       const th = (j.videoThumbnails||[])[0];
       return { id, title:j.title||('YouTube '+id), artist:j.author||null,
-        thumbnailURL:(th&&th.url)||('https://i.ytimg.com/vi/'+id+'/hqdefault.jpg'),
+        thumbnailURL:(th&&th.url)||('https://i.ytimg.com/vi/'+id+'/maxresdefault.jpg'),
         duration:(typeof j.lengthSeconds==='number'&&j.lengthSeconds>0)?j.lengthSeconds:null,
         viewCount:j.viewCount||0, publishedText:j.publishedText||null, source:'youtube' };
     }
@@ -1468,7 +1518,9 @@ function postNowPlayingToNative(){
       wantsPlayback: st.source==='youtube' ? !!YT.wantPlay : isPlaying,
       queueIndex: Math.max(0,Q.idx),
       queueCount: Q.items.length,
-      artworkURL: current.thumbnailURL || '',
+      artworkURL: artworkCandidates(current)[0] || bestArtworkURL(current),
+      artworkCandidates: artworkCandidates(current),
+      videoID: current.source==='youtube' ? (current.videoId||current.id||'') : '',
       trackID: trackKey(current)
     });
   } catch(_) {}
@@ -1677,13 +1729,26 @@ const YT = (() => {
       clearTimeout(failT);
       failT = setTimeout(()=>{ if(!healthy) Coordinator.onYTFailed('silent'); }, canReuse?9000:14000);
     },
-    play(){
+    play(reason='explicit-play'){
       wantPlay=true; lastPlayRequestAt=Date.now();
-      ROZZADebug.yt('CMD PLAY reason=explicit-play wantPlay=true');
-      syncBackgroundIntent(true, 'explicit-play');
-      if(backgroundBridgeEnabled) setBackgroundBridge(true, true, 'explicit-play');
+      ROZZADebug.yt('CMD PLAY reason='+reason+' wantPlay=true');
+      syncBackgroundIntent(true, reason);
+      if(backgroundBridgeEnabled) setBackgroundBridge(true, true, reason);
       if(ready) cmd('playVideo',[]);
       else if(currentId && !iframe) buildIframe(currentId, true);
+    },
+    // Automatic lifecycle recovery is transport-only. It is forbidden from
+    // creating PLAY intent. That single distinction lets a human Pause always
+    // win over Home/lock recovery, even when delayed callbacks arrive later.
+    resume(reason='automatic-resume'){
+      if(!wantPlay) return false;
+      lastPlayRequestAt=Date.now();
+      ROZZADebug.yt('CMD RESUME reason='+reason+' preserveIntent=true');
+      syncBackgroundIntent(true, reason);
+      if(backgroundBridgeEnabled) setBackgroundBridge(true, true, reason);
+      if(ready) cmd('playVideo',[]);
+      else if(currentId && !iframe) buildIframe(currentId, true);
+      return true;
     },
     // `reason` distinguishes a real user/system pause from internal callers —
     // every pause, whoever asks for it, is intentional and final until play()
@@ -2073,7 +2138,7 @@ const RemoteDiagnostics={
   },
   snapshot(){
     const st=PlaybackState.get();
-    return {version:'4.1.1',build:27,nativeShell:IS_NATIVE_SHELL,last:this.last,queueIndex:Q.idx,queueCount:Q.items.length,current:current?{id:trackKey(current),title:current.title,source:current.source}:null,playback:st,youtube:{state:YT.state,wantPlay:YT.wantPlay,playing:YT.playing,mounted:YT.mounted,videoId:YT.videoId},foreground:ROZZAAppForeground};
+    return {version:'4.1.2',build:28,nativeShell:IS_NATIVE_SHELL,last:this.last,queueIndex:Q.idx,queueCount:Q.items.length,current:current?{id:trackKey(current),title:current.title,source:current.source}:null,playback:st,youtube:{state:YT.state,wantPlay:YT.wantPlay,playing:YT.playing,mounted:YT.mounted,videoId:YT.videoId},foreground:ROZZAAppForeground};
   }
 };
 window.ROZZARemoteDiagnostics=RemoteDiagnostics;
@@ -2081,15 +2146,20 @@ window.ROZZARemoteDiagnostics=RemoteDiagnostics;
 window.ROZZANativeControls = {
   play(){
     if(!current){ if(Q.items.length) Coordinator.playIndex(0,true,'remote-play'); return {ok:!!Q.items.length}; }
-    if(current.source==='youtube') YT.play();
+    if(current.source==='youtube') YT.play('system-remote-play');
     else if(!Audio.playing) Audio.play().catch(()=>{});
     return {ok:true,action:'play',index:Q.idx,count:Q.items.length};
   },
   pause(){
     if(!current) return {ok:false,reason:'no-current'};
-    if(current.source==='youtube') YT.pause('System remote');
+    if(current.source==='youtube') YT.pause('human-system-remote');
     else Audio.pause();
-    return {ok:true,action:'pause',index:Q.idx,count:Q.items.length};
+    return {ok:true,action:'pause',index:Q.idx,count:Q.items.length,wantsPlayback:false};
+  },
+  enforceHumanPause(reason='human-pause-fence'){
+    if(!current || current.source!=='youtube' || YT.wantPlay) return {ok:false,reason:'not-paused-intent'};
+    YT.pause(reason);
+    return {ok:true,reason,state:YT.state,wantsPlayback:false};
   },
   next(){ Coordinator.next(false); return {ok:true,action:'next',index:Q.idx,count:Q.items.length}; },
   previous(){ const p=Coordinator.previousTrack(); return {ok:p>=0,action:'previous',index:Q.idx,count:Q.items.length}; },
@@ -2110,7 +2180,7 @@ window.ROZZANativeControls = {
     let result={ok:false,action};
     if(action==='play') result=this.play();
     else if(action==='pause'||action==='stop') result=this.pause();
-    else if(action==='toggle'){ Coordinator.toggle(); result={ok:true,action,index:Q.idx,count:Q.items.length}; }
+    else if(action==='toggle'){ if(current?.source==='youtube'){ if(YT.wantPlay) result=this.pause(); else result=this.play(); } else { Coordinator.toggle(); result={ok:true,action,index:Q.idx,count:Q.items.length}; } }
     else if(action==='next'){ result=this.next(); }
     else if(action==='previous'){ result=this.previous(); if(current){ if(current.source==='youtube')YT.play(); else Audio.play().catch(()=>{}); } }
     else if(action==='seekTo') result=this.seekTo(Number(value)||0);
@@ -2193,7 +2263,7 @@ window.ROZZANativeControls = {
       return { requested:true, bridgePulse:true, outerAlreadyPlaying:true, state:YT.state };
     }
     ROZZADebug.yt('BACKGROUND AUTO-RESUME reason='+reason+' state='+YT.state);
-    YT.play();
+    YT.resume(reason);
     return { requested:true, bridgePulse:true, state:YT.state };
   },
   foreground(){
@@ -2208,7 +2278,7 @@ window.ROZZANativeControls = {
     // restore the user's existing PLAY intent once on return. This is not a
     // background retry loop and never runs after an explicit user pause.
     if(current && current.source==='youtube' && YT.wantPlay && YT.state===2){
-      setTimeout(()=>{ if(ROZZAAppForeground && YT.wantPlay && YT.state===2) YT.play(); }, 120);
+      setTimeout(()=>{ if(ROZZAAppForeground && YT.wantPlay && YT.state===2) YT.resume('foreground-return'); }, 120);
     }
   },
   // Bridged from DJPlaybackController.handleInterruption. While a real
@@ -2248,7 +2318,7 @@ function mediaSession(){
   try{
     navigator.mediaSession.metadata = new MediaMetadata({
       title: current.title || 'ROZZA', artist: current.artist || 'ROZZA', album: 'ROZZA',
-      artwork: [{ src: current.thumbnailURL || FALLBACK_ART, sizes:'480x360', type:'image/png' }]
+      artwork: [{ src: bestArtworkURL(current), sizes:'1280x720', type:'image/jpeg' }]
     });
     const M = navigator.mediaSession;
     // PLAY must explicitly play and PAUSE must explicitly pause — never
@@ -2732,7 +2802,7 @@ function updateMini(){
   const mb=$('#minibar'); updateLiveAtmosphere(current);
   if(!current){ mb.classList.remove('show'); const da=$('#deckArt'); if(da){ da.style.backgroundImage=''; da.classList.remove('has-art'); } return; }
   mb.classList.add('show');
-  const art=current.thumbnailURL||FALLBACK_ART;
+  const art=bestArtworkURL(current);
   $('#mbArt').style.backgroundImage='url('+art+')';
   const da=$('#deckArt'); if(da){ da.style.backgroundImage='url('+art+')'; da.classList.add('has-art'); }
   const db=$('#deckBackdrop'); if(db) db.style.backgroundImage='linear-gradient(90deg,rgba(7,7,11,.84),rgba(7,7,11,.4)),url('+art+')';
@@ -2758,13 +2828,7 @@ function hideYTArtworkCover(){
 function showYTArtworkCover(r){
   const cover=$('#ytArtworkCover'), img=$('#ytArtworkCoverImg');
   if(!cover || !img || !current || current.source!=='youtube') return;
-  const videoId=current.videoId||current.id||'';
-  const art=current.thumbnailURL || (videoId ? ('https://i.ytimg.com/vi/'+encodeURIComponent(videoId)+'/hqdefault.jpg') : FALLBACK_ART);
-  if(img.dataset.src!==art){
-    img.dataset.src=art;
-    img.onerror=()=>{ img.onerror=null; img.src=FALLBACK_ART; };
-    img.src=art;
-  }
+  loadBestArtworkImage(img,current);
   cover.style.cssText='display:block;position:fixed;left:'+r.left+'px;top:'+r.top+'px;width:'+r.width+'px;height:'+r.height+'px;z-index:86;pointer-events:none;border-radius:22px;overflow:hidden;background:#08090d;box-shadow:0 26px 70px rgba(0,0,0,.48)';
   cover.classList.add('show');
 }
@@ -2804,7 +2868,7 @@ function updateNowPlaying(){
     if(bg) bg.classList.remove('show');
     postNowPlayingToNative(); renderDriveMode(); repositionYT(); return;
   }
-  const art=current.thumbnailURL||FALLBACK_ART;
+  const art=bestArtworkURL(current);
   if(bg){ bg.style.backgroundImage="url('"+art.replace(/'/g,"\\'")+"')"; bg.classList.add('show'); }
   const isYT=current.source==='youtube';
   c.innerHTML=
@@ -3194,7 +3258,7 @@ function wire(){
   $('#clrMirrors').onclick=()=>{ store.del('mirrors'); loadPool(); warmup(); toast('Mirror cache reset','ok','DATA'); };
   $('#queueClear').onclick=()=>{ clearQueue(); toast('Queue cleared','ok','QUEUE'); };
   const copyVehicleDiag=$('#copyVehicleDiagnosticsBtn'); if(copyVehicleDiag) copyVehicleDiag.onclick=async()=>{ const payload=JSON.stringify(RemoteDiagnostics.snapshot(),null,2); try{await navigator.clipboard.writeText(payload);toast('Vehicle diagnostics copied','ok','DRIVE REMOTE');}catch(e){toast('Could not access clipboard','warn','DRIVE REMOTE');} };
-  const copyDiag=$('#copyDiagnosticsBtn'); if(copyDiag) copyDiag.onclick=async()=>{ const payload='ROZZA 4.1.1 ARTWORK SIGNATURE\n'+JSON.stringify(ROZZADebug.getState(),null,2)+'\n\n'+ROZZADebug.getLog(); try{await navigator.clipboard.writeText(payload);toast('Diagnostics copied','ok','SUPPORT');}catch(e){toast('Could not access clipboard','warn','SUPPORT');} };
+  const copyDiag=$('#copyDiagnosticsBtn'); if(copyDiag) copyDiag.onclick=async()=>{ const payload='ROZZA 4.1.2 HD SMART PAUSE\n'+JSON.stringify(ROZZADebug.getState(),null,2)+'\n\n'+ROZZADebug.getLog(); try{await navigator.clipboard.writeText(payload);toast('Diagnostics copied','ok','SUPPORT');}catch(e){toast('Could not access clipboard','warn','SUPPORT');} };
   const netRetry=$('#networkRetry'); if(netRetry) netRetry.onclick=()=>{ refreshRegistries().then(()=>warmup()); };
   window.addEventListener('offline',()=>{ const b=$('#networkBanner');if(b)b.classList.add('show');setConn('quiet'); });
   window.addEventListener('online',()=>{ const b=$('#networkBanner');if(b)b.classList.remove('show');refreshRegistries().then(()=>warmup());toast('Back online','ok','CONNECTION'); });

@@ -1,4 +1,4 @@
-# ROZZA 4.1.1 — ARTWORK SIGNATURE · Build 27
+# ROZZA 4.1.2 — HD SMART PAUSE · Build 28
 
 ROZZA is an iOS-first music experience built around a persistent native `WKWebView`, native audio/session integration, queue intelligence, discovery, Flow, Radio, Event Mode, and system media controls.
 
@@ -18,9 +18,9 @@ Output:
 build/ROZZA-Unsigned.ipa
 ```
 
-The build script runs `Scripts/qa-source.py` and resource checks before invoking Xcode, then validates that the resulting `.app` contains the expected Build 27 HTML, background bridge, network bridge, persistent-player markers, and native remote-command code.
+The build script runs `Scripts/qa-source.py` and resource checks before invoking Xcode, then validates that the resulting `.app` contains the expected Build 28 HTML, background bridge, network bridge, persistent-player markers, and native remote-command code.
 
-## Build 27 highlights
+## Build 28 highlights
 
 - Native vehicle / Bluetooth / AirPods / Lock Screen transport path for Play, Pause, Next, Previous, Stop and seek
 - Acknowledged, idempotent remote commands so a retry cannot double-skip
@@ -42,6 +42,6 @@ The build script runs `Scripts/qa-source.py` and resource checks before invoking
 - `project.yml`
 - `Scripts/build-unsigned-ipa.sh`
 
-The obsolete duplicate `ios/` project was removed in Build 27 to prevent stale/incorrect builds.
+The obsolete duplicate `ios/` project was removed in Build 28 to prevent stale/incorrect builds.
 
-See `ROZZA-IOS-START-HERE.md` and `QA-4.1.1-DRIVE.md`.
+See `ROZZA-IOS-START-HERE.md` and `QA-4.1.2-DRIVE.md`.
