@@ -1,98 +1,47 @@
-# vinext-starter
+# ROZZA 4.1.0 — DRIVE REMOTE · Build 26
 
-A clean full-stack starter running on
-[vinext](https://github.com/cloudflare/vinext), with optional Cloudflare D1 and
-Drizzle support.
+ROZZA is an iOS-first music experience built around a persistent native `WKWebView`, native audio/session integration, queue intelligence, discovery, Flow, Radio, Event Mode, and system media controls.
 
-## Prerequisites
+## Build the iOS app
 
-- Node.js `>=22.13.0`
-
-## Quick Start
+Use the **root project only**:
 
 ```bash
-npm install
-npm run dev
-npm run build
+brew install xcodegen
+chmod +x Scripts/build-unsigned-ipa.sh
+./Scripts/build-unsigned-ipa.sh
 ```
 
-This starter does not use `wrangler.jsonc`.
+Output:
 
-## Included Shape
-
-- edit site code under `app/`
-- `.openai/hosting.json` declares optional Sites D1 and R2 bindings
-- `vite.config.ts` simulates declared bindings for local development
-- `db/schema.ts` starts intentionally empty
-- `examples/d1/` contains an optional D1 example surface
-- `drizzle.config.ts` supports local migration generation when needed
-
-## Workspace Auth Headers
-
-OpenAI workspace sites can read the current user's email from
-`oai-authenticated-user-email`.
-
-SIWC-authenticated workspace sites may also receive
-`oai-authenticated-user-full-name` when the user's SIWC profile has a non-empty
-`name` claim. The full-name value is percent-encoded UTF-8 and is accompanied by
-`oai-authenticated-user-full-name-encoding: percent-encoded-utf-8`.
-
-Treat the full name as optional and fall back to email when it is absent:
-
-```tsx
-import { headers } from "next/headers";
-
-export default async function Home() {
-  const requestHeaders = await headers();
-  const email = requestHeaders.get("oai-authenticated-user-email");
-  const encodedFullName = requestHeaders.get("oai-authenticated-user-full-name");
-  const fullName =
-    encodedFullName &&
-    requestHeaders.get("oai-authenticated-user-full-name-encoding") ===
-      "percent-encoded-utf-8"
-      ? decodeURIComponent(encodedFullName)
-      : null;
-
-  const displayName = fullName ?? email;
-  // ...
-}
+```text
+build/ROZZA-Unsigned.ipa
 ```
 
-## Optional Dispatch-Owned ChatGPT Sign-In
+The build script runs `Scripts/qa-source.py` and resource checks before invoking Xcode, then validates that the resulting `.app` contains the expected Build 26 HTML, background bridge, network bridge, persistent-player markers, and native remote-command code.
 
-Import the ready-to-use helpers from `app/chatgpt-auth.ts` when the site needs
-optional or required ChatGPT sign-in:
+## Build 26 highlights
 
-- Use `getChatGPTUser()` for optional signed-in UI.
-- Use `requireChatGPTUser(returnTo)` for server-rendered pages that should send
-  anonymous visitors through Sign in with ChatGPT.
-- Use `chatGPTSignInPath(returnTo)` and `chatGPTSignOutPath(returnTo)` for
-  browser links or actions.
-- Pass a same-origin relative `returnTo` path for the destination after sign-in
-  or sign-out. The helper validates and safely encodes it.
-- Mark protected pages with `export const dynamic = "force-dynamic"` because
-  they depend on per-request identity headers.
+- Native vehicle / Bluetooth / AirPods / Lock Screen transport path for Play, Pause, Next, Previous, Stop and seek
+- Acknowledged, idempotent remote commands so a retry cannot double-skip
+- Short background execution window for remote commands received while the app is inactive
+- Background resume pulse after a remote Next / Previous / Play action
+- One native system-command owner on iPhone; Web MediaSession is browser-only
+- Now Playing artwork, queue index and queue count, with stale metadata cleanup
+- Drive Mode with large transport controls and a Coming Up view
+- Vehicle diagnostics snapshot for fast troubleshooting
+- Continuous Play setting for automatic next-track playback
+- Persistent YouTube iframe switching (`loadVideoById`) from Build 25
+- Native `URLSession` metadata/search fallback from Build 24
 
-Dispatch owns `/signin-with-chatgpt`, `/signout-with-chatgpt`, `/callback`, the
-OAuth cookies, and identity header injection. Do not implement app routes for
-those reserved paths. Routes that do not import and call the helper remain
-anonymous-compatible.
+## Canonical source
 
-SIWC establishes identity only; it does not prove workspace membership. Use the
-Sites hosting platform's access policy controls for workspace-wide restrictions,
-or enforce explicit server-side membership or allowlist checks.
+- `rozza2.html`
+- `Sources/`
+- `Resources/`
+- `project.yml`
+- `Scripts/build-unsigned-ipa.sh`
 
-Use SIWC for account pages, user-specific dashboards, saved records, and write
-actions tied to the current ChatGPT user. Leave public content anonymous.
+The obsolete duplicate `ios/` project was removed in Build 26 to prevent stale/incorrect builds.
 
-## Useful Commands
-
-- `npm run dev`: start local development
-- `npm run build`: verify the vinext build output
-- `npm test`: build the starter and verify its rendered loading skeleton
-- `npm run db:generate`: generate Drizzle migrations after schema changes
-
-## Learn More
-
-- [vinext Documentation](https://github.com/cloudflare/vinext)
-- [Drizzle D1 Guide](https://orm.drizzle.team/docs/get-started/d1-new)
+See `ROZZA-IOS-START-HERE.md` and `QA-4.1.0-DRIVE.md`.

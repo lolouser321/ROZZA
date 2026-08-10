@@ -476,6 +476,11 @@ html,body{background:#050507}
 .rec-chip{min-height:40px}
 .sleep-row button,.world-select button,.command-examples button{min-height:36px}
 
+
+/* DRIVE REMOTE — minimal, glanceable controls */
+.universe-launch.drive{background:linear-gradient(145deg,rgba(24,34,43,.96),rgba(7,9,13,.98));border-color:rgba(116,196,255,.16)}
+.drive-sheet .sheet-body{padding-bottom:40px}.drive-hero{display:flex;align-items:center;gap:16px;padding:10px 0 18px}.drive-art{width:92px;height:92px;flex:none;border-radius:24px;background:linear-gradient(145deg,#232631,#0c0d12);background-size:cover;background-position:center;display:grid;place-items:center;box-shadow:0 18px 45px rgba(0,0,0,.35)}.drive-art span{font-size:30px;font-weight:900;background:var(--grad);-webkit-background-clip:text;color:transparent}.drive-art.has-art span{display:none}.drive-meta{min-width:0}.drive-k{font-size:9px;letter-spacing:.16em;color:#7e8190;font-weight:800}.drive-meta h2{margin:7px 0 4px;font-size:22px;line-height:1.12;letter-spacing:-.03em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.drive-meta p{margin:0;color:#9295a1;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.drive-transport{display:grid;grid-template-columns:1fr 1.25fr 1fr;gap:12px;align-items:center;margin:6px 0 16px}.drive-transport button{height:74px;border-radius:24px;background:rgba(255,255,255,.06);border:1px solid var(--line);font-size:26px;font-weight:800}.drive-transport .drive-play{height:86px;background:#fff;color:#050507;font-size:30px}.drive-actions{display:grid;grid-template-columns:1fr 1fr 1fr;gap:9px}.drive-actions button{min-height:50px;border-radius:16px;background:rgba(255,255,255,.055);border:1px solid var(--line);font-size:12px;font-weight:750}.drive-actions button.on{color:#ff6b91;background:rgba(255,46,99,.12);border-color:rgba(255,46,99,.25)}.drive-next{margin-top:22px;padding:16px;border-radius:22px;background:rgba(255,255,255,.035);border:1px solid var(--line)}.drive-next-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}.drive-next-head b{font-size:13px}.drive-next-head span{font-size:10px;color:#777b88}.drive-next-row{width:100%;display:flex;gap:12px;align-items:center;text-align:left;padding:10px 2px;border-top:1px solid rgba(255,255,255,.05)}.drive-next-row>span{width:24px;height:24px;display:grid;place-items:center;border-radius:8px;background:rgba(255,255,255,.06);font-size:10px;color:#9ca0ad}.drive-next-row div{min-width:0}.drive-next-row b,.drive-next-row small{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.drive-next-row b{font-size:12.5px}.drive-next-row small{font-size:10.5px;color:#7f828f;margin-top:2px}.drive-empty{font-size:12px;color:#777b88;padding:8px 0}.drive-system-note{display:flex;flex-direction:column;gap:4px;margin-top:14px;padding:14px;border-radius:18px;background:rgba(110,231,183,.055);border:1px solid rgba(110,231,183,.1)}.drive-system-note b{font-size:11px;color:#bdf5e3}.drive-system-note span{font-size:10.5px;line-height:1.45;color:#7f918b}
+
 </style>
 </head>
 <body>
@@ -584,6 +589,7 @@ html,body{background:#050507}
             <button class="universe-launch big event" id="eventLaunchBtn"><div class="universe-k">ROZZA EVENT</div><h4>Let ROZZA run the room.</h4><p>Duration, energy, language, entrance cue, backup queue and event-safe controls.</p><span class="u-arrow">↗</span></button>
             <button class="universe-launch discover" id="discoveryLaunchBtn"><div class="universe-k">DISCOVER</div><h4>Find your next obsession.</h4><p>Fast taste-learning discovery.</p><span class="u-arrow">→</span></button>
             <button class="universe-launch surprise" id="dailySurpriseBtn"><div class="universe-k">DAILY SURPRISE</div><h4>One unexpected pick.</h4><p>New, but still you.</p><span class="u-arrow">✦</span></button>
+            <button class="universe-launch drive" id="driveLaunchBtn"><div class="universe-k">DRIVE MODE</div><h4>Big controls. Zero hunting.</h4><p>Remote-ready playback with queue, like and radio shortcuts.</p><span class="u-arrow">🚗</span></button>
           </div>
           <div class="world-strip" id="worldStrip">
             <button data-worldq="Egyptian Arabic hits"><span>🇪🇬</span>Egypt</button>
@@ -724,6 +730,7 @@ html,body{background:#050507}
           <div class="settings-group">
             <div class="settings-label">Playback intelligence</div>
             <div class="set-row"><div><div class="sl">Smart Queue</div><div class="sd">Keep music going when Up Next gets low</div></div><button class="toggle on" data-set="smartQueue"></button></div>
+            <div class="set-row"><div><div class="sl">Continuous Play</div><div class="sd">Automatically start the next song without another tap</div></div><button class="toggle on" data-set="continuousPlayback"></button></div>
             <div class="set-row"><div><div class="sl">Session continuity</div><div class="sd">Remember song and position across relaunches</div></div><button class="toggle on" data-set="sessionContinuity"></button></div>
             <div class="set-row"><div><div class="sl">Playback Watchdog</div><div class="sd">Recover safely from stuck playback</div></div><button class="toggle on" data-set="watchdog"></button></div>
             <div class="set-row"><div><div class="sl">ROZZA Brain</div><div class="sd">Learn from plays, skips and favorites to improve the next song</div></div><button class="toggle on" data-set="brain"></button></div>
@@ -754,8 +761,11 @@ html,body{background:#050507}
             <div class="set-row"><div class="sl">Reset queue</div><button class="text-action" id="clrQueue">Reset</button></div>
             <div class="set-row"><div class="sl">Reset source cache</div><button class="text-action" id="clrMirrors">Reset</button></div>
           </div>
-          <div class="settings-group"><div class="settings-label">Support</div><div class="set-row"><div><div class="sl">Playback diagnostics</div><div class="sd">Copy a private technical timeline when something fails</div></div><button class="text-action" id="copyDiagnosticsBtn">Copy</button></div></div>
-          <div class="ver">ROZZA 4.0.5 · PERFORMANCE AUTOPLAY</div>
+          <div class="settings-group"><div class="settings-label">Support</div>
+            <div class="set-row"><div><div class="sl">Vehicle controls</div><div class="sd" id="vehicleControlStatus">Ready · waiting for a command</div></div><button class="text-action" id="copyVehicleDiagnosticsBtn">Copy</button></div>
+            <div class="set-row"><div><div class="sl">Playback diagnostics</div><div class="sd">Copy a private technical timeline when something fails</div></div><button class="text-action" id="copyDiagnosticsBtn">Copy</button></div>
+          </div>
+          <div class="ver">ROZZA 4.1.0 · DRIVE REMOTE</div>
         </section>
       </main>
 
@@ -815,6 +825,18 @@ html,body{background:#050507}
           <div class="event-actions"><button class="primary" id="eventStartBtn">Build event set</button><button class="danger" id="eventEmergencyBtn">CHANGE THE VIBE</button></div>
           <div class="entrance-card"><b>Entrance cue</b><p id="entranceCueLabel">Save the current song and exact moment, then trigger it with one tap.</p><div class="entrance-actions"><button id="entranceSaveBtn">Save current moment</button><button id="entrancePlayBtn">Play cue</button></div></div>
           <div class="guest-request-card"><b>Local guest requests</b><div class="guest-request-row"><input id="guestRequestInput" placeholder="Type a request"><button id="guestRequestAdd">Add</button></div><div class="guest-requests" id="guestRequests"></div></div>
+        </div>
+      </section>
+
+      <section class="sheet drive-sheet" id="driveSheet">
+        <div class="grabber" data-grab="drive"></div>
+        <div class="sheet-head"><div class="sh-t"><span class="live"></span>Drive Mode</div><button class="sh-x" data-close="drive">✕</button></div>
+        <div class="sheet-body">
+          <div class="drive-hero"><div class="drive-art" id="driveArt"><span>R</span></div><div class="drive-meta"><div class="drive-k">NOW PLAYING</div><h2 id="driveTitle" dir="auto">Nothing playing</h2><p id="driveArtist" dir="auto">Start a song and ROZZA stays ready.</p></div></div>
+          <div class="drive-transport"><button id="drivePrev" aria-label="Previous">◀︎</button><button class="drive-play" id="drivePlay" aria-label="Play or pause">▶</button><button id="driveNext" aria-label="Next">▶︎</button></div>
+          <div class="drive-actions"><button id="driveLike">♡ Like</button><button id="driveRadio">◉ Radio</button><button id="driveQueue">☷ Queue</button></div>
+          <div class="drive-next"><div class="drive-next-head"><b>Coming up</b><span id="driveQueuePosition">0 / 0</span></div><div id="driveNextList"></div></div>
+          <div class="drive-system-note"><b>Vehicle controls are active</b><span>Play, pause, next, previous and timeline seeking are handled by the native remote-control engine.</span></div>
         </div>
       </section>
 
@@ -962,6 +984,7 @@ const uid = () => Math.random().toString(36).slice(2,10);
 const clamp = (v,a,b) => Math.max(a, Math.min(b, v));
 const debounce = (fn, ms) => { let t; return (...a) => { clearTimeout(t); t = setTimeout(()=>fn(...a), ms); }; };
 const haptic = (kind='light') => { try{ window.webkit?.messageHandlers?.haptics?.postMessage(kind); }catch(_){} };
+const IS_NATIVE_SHELL = !!window.webkit?.messageHandlers?.nowPlaying;
 
 const store = {
   get(k, d){ try{ const v = localStorage.getItem('rozza.'+k); return v==null? d : JSON.parse(v); }catch(e){ return d; } },
@@ -1409,7 +1432,10 @@ function deactivateNativeAudioSession(){
   try{ window.webkit?.messageHandlers?.audioSession?.postMessage('deactivate'); }catch(_){}
 }
 function postNowPlayingToNative(){
-  if(!current) return;
+  if(!current){
+    try { window.webkit?.messageHandlers?.nowPlaying?.postMessage({ clear:true, isPlaying:false, source:'', wantsPlayback:false, queueIndex:0, queueCount:0 }); } catch(_) {}
+    return;
+  }
   const st = PlaybackState.get();
   const isPlaying = st.status==='playing' || st.status==='buffering';
   const elapsed = st.source==='youtube' ? YT.time : Audio.time;
@@ -1422,7 +1448,11 @@ function postNowPlayingToNative(){
       elapsed: elapsed || 0,
       isPlaying: isPlaying,
       source: st.source || current.source || '',
-      wantsPlayback: st.source==='youtube' ? !!YT.wantPlay : isPlaying
+      wantsPlayback: st.source==='youtube' ? !!YT.wantPlay : isPlaying,
+      queueIndex: Math.max(0,Q.idx),
+      queueCount: Q.items.length,
+      artworkURL: current.thumbnailURL || '',
+      trackID: trackKey(current)
     });
   } catch(_) {}
 }
@@ -1889,11 +1919,20 @@ const Coordinator = {
   prev(){
     const t = current && current.source==='youtube' ? YT.time : Audio.time;
     if(t > 3){ this.seek(0); return; }
-    const p = prevIndex(); if(p>=0) this.playIndex(p, true);
+    const p = prevIndex(); if(p>=0) this.playIndex(p, true,'previous-button');
+  },
+  // Vehicle/Lock Screen Previous is deliberately track-to-track. The normal
+  // in-app Previous button keeps the familiar "restart after 3 seconds"
+  // behavior, but a steering-wheel/head-unit Previous press should visibly
+  // change tracks instead of looking like the command was ignored.
+  previousTrack(){
+    const p = prevIndex();
+    if(p>=0) this.playIndex(p, true,'remote-previous-track');
+    return p;
   },
   seek(t){ if(!current) return; if(current.source==='youtube') YT.seek(t); else Audio.seek(t); setTimeout(()=>SessionState.save(true),250); },
   setVol(v){ settings.volume = clamp(v,0,1); store.set('settings', settings); Audio.vol(settings.volume); YT.setVol(settings.volume); },
-  onEnded(){ Brain?.noteCompletion?.(current); SessionState.save(true); PlaybackState.set({ status:'ended' }); if(typeof SleepTimer!=='undefined'&&SleepTimer.onEnded()) return; this.next(true); },
+  onEnded(){ Brain?.noteCompletion?.(current); SessionState.save(true); PlaybackState.set({ status:'ended' }); if(typeof SleepTimer!=='undefined'&&SleepTimer.onEnded()) return; if(settings.continuousPlayback===false){ UI.onPlayState(false); return; } this.next(true); },
   onAudioError(){
     // YouTube tracks never touch the Audio element any more — they load
     // exclusively through YT.load() — so by construction, an error here can
@@ -2008,24 +2047,90 @@ window.Coordinator = Coordinator;
  * to the same Coordinator instance everything else uses; there is no second
  * player for remote commands to talk to.
  */
+const RemoteDiagnostics={
+  last:null,
+  note(action,result){
+    this.last={action:String(action||''),at:Date.now(),index:Q.idx,count:Q.items.length,trackID:trackKey(current),ok:result?.ok!==false};
+    const el=$('#vehicleControlStatus');
+    if(el) el.textContent=(this.last.ok?'Received ':'Failed ')+this.last.action+' · '+new Date(this.last.at).toLocaleTimeString([],{hour:'numeric',minute:'2-digit',second:'2-digit'});
+  },
+  snapshot(){
+    const st=PlaybackState.get();
+    return {version:'4.1.0',build:26,nativeShell:IS_NATIVE_SHELL,last:this.last,queueIndex:Q.idx,queueCount:Q.items.length,current:current?{id:trackKey(current),title:current.title,source:current.source}:null,playback:st,youtube:{state:YT.state,wantPlay:YT.wantPlay,playing:YT.playing,mounted:YT.mounted,videoId:YT.videoId},foreground:ROZZAAppForeground};
+  }
+};
+window.ROZZARemoteDiagnostics=RemoteDiagnostics;
+
 window.ROZZANativeControls = {
   play(){
-    if(!current){ if(Q.items.length) Coordinator.playIndex(0); return; }
+    if(!current){ if(Q.items.length) Coordinator.playIndex(0,true,'remote-play'); return {ok:!!Q.items.length}; }
     if(current.source==='youtube') YT.play();
     else if(!Audio.playing) Audio.play().catch(()=>{});
+    return {ok:true,action:'play',index:Q.idx,count:Q.items.length};
   },
   pause(){
-    if(!current) return;
-    if(current.source==='youtube') YT.pause('Control Center');
+    if(!current) return {ok:false,reason:'no-current'};
+    if(current.source==='youtube') YT.pause('System remote');
     else Audio.pause();
+    return {ok:true,action:'pause',index:Q.idx,count:Q.items.length};
   },
-  next(){ Coordinator.next(false); },
-  previous(){ Coordinator.prev(); },
-  seekTo(t){ if(typeof t==='number') Coordinator.seek(t); },
+  next(){ Coordinator.next(false); return {ok:true,action:'next',index:Q.idx,count:Q.items.length}; },
+  previous(){ const p=Coordinator.previousTrack(); return {ok:p>=0,action:'previous',index:Q.idx,count:Q.items.length}; },
+  seekTo(t){ if(typeof t==='number'){ Coordinator.seek(t); return {ok:true,action:'seekTo',position:t}; } return {ok:false}; },
   seekBy(delta){
-    if(typeof delta!=='number' || !current) return;
+    if(typeof delta!=='number' || !current) return {ok:false};
     const t=(current.source==='youtube'?YT.time:Audio.time)+delta;
     Coordinator.seek(Math.max(0,t));
+    return {ok:true,action:'seekBy',position:Math.max(0,t)};
+  },
+  _lastRemoteNonce:null,
+  _lastRemoteResult:null,
+  remote(action,value,nonce){
+    action=String(action||'');
+    if(nonce!=null && this._lastRemoteNonce===nonce) return this._lastRemoteResult;
+    ROZZADebug.native('remote command='+action+(value!=null?' value='+value:''));
+    activateNativeAudioSession();
+    let result={ok:false,action};
+    if(action==='play') result=this.play();
+    else if(action==='pause'||action==='stop') result=this.pause();
+    else if(action==='toggle'){ Coordinator.toggle(); result={ok:true,action,index:Q.idx,count:Q.items.length}; }
+    else if(action==='next'){ result=this.next(); }
+    else if(action==='previous'){ result=this.previous(); if(current){ if(current.source==='youtube')YT.play(); else Audio.play().catch(()=>{}); } }
+    else if(action==='seekTo') result=this.seekTo(Number(value)||0);
+    else if(action==='seekBy') result=this.seekBy(Number(value)||0);
+    else if(action==='like'){
+      if(current){ if(!isFavorite(current)) toggleFavorite(current); result={ok:true,action,liked:true}; }
+    }
+    else if(action==='dislike'){
+      if(current){ Brain?.feedback?.(current,-1); Coordinator.next(false); result={ok:true,action}; }
+    }
+    const wantsRun = action==='play'||action==='next'||action==='previous'||action==='dislike';
+    if(wantsRun && current && current.source==='youtube' && !ROZZAAppForeground){
+      // System/vehicle commands arrive while WKWebView is backgrounded. Re-arm
+      // the already-installed iframe bridge for the newly selected track and
+      // pulse the real <video> after the command, not only during Home/lock.
+      const remoteReason='remote-'+action;
+      YT.syncBackgroundIntent(true,remoteReason);
+      YT.setBackgroundBridge(true,true,remoteReason);
+      [60,240,700].forEach(delay=>setTimeout(()=>{
+        if(!ROZZAAppForeground && current && current.source==='youtube' && YT.wantPlay){
+          YT.pulseBackgroundBridge(remoteReason+'-'+delay);
+          if(YT.state!==1) YT.play();
+        }
+      },delay));
+    }
+    postNowPlayingToNative();
+    renderDriveMode();
+    const st=PlaybackState.get();
+    const finalResult=Object.assign({
+      index:Q.idx,
+      count:Q.items.length,
+      trackID:trackKey(current),
+      wantsPlayback: current?.source==='youtube' ? !!YT.wantPlay : (st.status==='playing'||st.status==='buffering')
+    },result||{});
+    RemoteDiagnostics.note(action,finalResult);
+    if(nonce!=null){ this._lastRemoteNonce=nonce; this._lastRemoteResult=finalResult; }
+    return finalResult;
   },
   backgroundPrepare(){
     ROZZAAppForeground = false;
@@ -2119,7 +2224,10 @@ document.addEventListener('visibilitychange', () => {
 function setNeedsTap(on){ const b=$('#npPlayBtn'); if(b) b.classList.toggle('needs-tap', !!on); }
 
 function mediaSession(){
-  if(!('mediaSession' in navigator) || !current) return;
+  // The iOS shell owns MPRemoteCommandCenter + MPNowPlayingInfoCenter. Do not
+  // register a second Web MediaSession command path in WKWebView or a single
+  // car-button press can be handled twice. Browser builds still use it.
+  if(IS_NATIVE_SHELL || !('mediaSession' in navigator) || !current) return;
   try{
     navigator.mediaSession.metadata = new MediaMetadata({
       title: current.title || 'ROZZA', artist: current.artist || 'ROZZA', album: 'ROZZA',
@@ -2130,16 +2238,18 @@ function mediaSession(){
     // toggle. A stale-state toggle here would issue the exact opposite of
     // what was requested. window.ROZZANativeControls.play()/.pause() are
     // the same explicit methods the native Lock Screen commands call.
-    M.setActionHandler('play', () => window.ROZZANativeControls.play());
-    M.setActionHandler('pause', () => window.ROZZANativeControls.pause());
-    M.setActionHandler('nexttrack', () => Coordinator.next(false));
-    M.setActionHandler('previoustrack', () => Coordinator.prev());
-    M.setActionHandler('seekto', d => { if(d.seekTime!=null) Coordinator.seek(d.seekTime); });
+    M.setActionHandler('play', () => window.ROZZANativeControls.remote('play'));
+    M.setActionHandler('pause', () => window.ROZZANativeControls.remote('pause'));
+    M.setActionHandler('nexttrack', () => window.ROZZANativeControls.remote('next'));
+    M.setActionHandler('previoustrack', () => window.ROZZANativeControls.remote('previous'));
+    M.setActionHandler('seekto', d => { if(d.seekTime!=null) window.ROZZANativeControls.remote('seekTo',d.seekTime); });
+    try{ M.setActionHandler('seekforward', d => window.ROZZANativeControls.remote('seekBy',d.seekOffset||15)); }catch(_){ }
+    try{ M.setActionHandler('seekbackward', d => window.ROZZANativeControls.remote('seekBy',-(d.seekOffset||15))); }catch(_){ }
   }catch(e){}
 }
 
 /* ---------------- SETTINGS / HISTORY / LIBRARY ---------------- */
-let settings = Object.assign({ volume:0.85, particles:false, simViz:true, smartQueue:true, sessionContinuity:true, watchdog:true, brain:true, privateSession:false, batterySaver:false, dataSaver:false, smartClean:false, visualWorld:'midnight' }, store.get('settings', {}));
+let settings = Object.assign({ volume:0.85, particles:false, simViz:true, smartQueue:true, continuousPlayback:true, sessionContinuity:true, watchdog:true, brain:true, privateSession:false, batterySaver:false, dataSaver:false, smartClean:false, visualWorld:'midnight' }, store.get('settings', {}));
 // v3: videoDefault controlled whether the YouTube player was allowed to
 // shrink to a near-invisible keep-alive box. That hidden/optional-visibility
 // architecture no longer exists — the player is now always genuinely visible
@@ -2525,6 +2635,28 @@ async function loadLink(raw){
   }
 }
 
+
+/* ---------------- DRIVE MODE / SYSTEM REMOTE ---------------- */
+function renderDriveMode(){
+  const title=$('#driveTitle'),artist=$('#driveArtist'),art=$('#driveArt'),pos=$('#driveQueuePosition'),list=$('#driveNextList');
+  if(!title||!artist||!art||!pos||!list)return;
+  if(!current){
+    title.textContent='Nothing playing'; artist.textContent='Start a song and ROZZA stays ready.';
+    art.style.backgroundImage=''; art.classList.remove('has-art');
+    pos.textContent='0 / '+Q.items.length; list.innerHTML='<div class="drive-empty">Your next songs will appear here.</div>';
+  }else{
+    title.textContent=current.title||'Untitled'; artist.textContent=current.artist||sourceLabel(current.source);
+    art.style.backgroundImage='url('+(current.thumbnailURL||FALLBACK_ART)+')'; art.classList.add('has-art');
+    pos.textContent=(Math.max(0,Q.idx)+1)+' / '+Q.items.length;
+    const up=Q.items.slice(Math.max(0,Q.idx+1),Math.max(0,Q.idx+1)+3);
+    list.innerHTML=up.length?up.map((it,i)=>'<button class="drive-next-row" data-drivei="'+(Q.idx+1+i)+'"><span>'+(i+1)+'</span><div><b dir="auto">'+h(it.title)+'</b><small dir="auto">'+h(it.artist||sourceLabel(it.source))+'</small></div></button>').join(''):'<div class="drive-empty">ROZZA will refill this when Smart Queue is on.</div>';
+    $$('[data-drivei]',list).forEach(b=>b.onclick=()=>Coordinator.playIndex(+b.dataset.drivei,true,'drive-mode'));
+  }
+  const st=PlaybackState.get(),playing=st.status==='playing'||st.status==='buffering';
+  const pb=$('#drivePlay'); if(pb)pb.textContent=playing?'Ⅱ':'▶';
+  const like=$('#driveLike'); if(like){like.textContent=current&&isFavorite(current)?'♥ Liked':'♡ Like';like.classList.toggle('on',!!(current&&isFavorite(current)));}
+}
+
 /* ---------------- UI ---------------- */
 let _lastNativePositionPush=0;
 let _lastMediaPositionPush=0;
@@ -2545,10 +2677,10 @@ const UI = {
     $('#mbPlay').innerHTML=playing?pauseIcon:playIcon;
     const np=$('#npPlayBtn'); if(np) np.innerHTML=playing?pauseIcon:playIcon;
     const hp=$('#homePlay'); if(hp) hp.innerHTML=playing?pauseIcon:playIcon;
-    if('mediaSession' in navigator){ try{ navigator.mediaSession.playbackState=playing?'playing':'paused'; }catch(e){} }
+    if(!IS_NATIVE_SHELL && 'mediaSession' in navigator){ try{ navigator.mediaSession.playbackState=playing?'playing':'paused'; }catch(e){} }
     postNowPlayingToNative();
     SessionState.save(false);
-    buildTicker();
+    buildTicker(); renderDriveMode();
   },
   onTime(t,d){
     t=t||0; d=(d&&isFinite(d))?d:(current&&current.duration)||0;
@@ -2558,7 +2690,7 @@ const UI = {
     if(fill){ const pct=d>0?clamp(t/d*100,0,100):0; fill.style.width=pct+'%'; if(knob) knob.style.left=pct+'%'; }
     if(ct) ct.textContent=fmtTime(t); if(dt) dt.textContent=fmtTime(d);
     const now=performance.now();
-    if('mediaSession' in navigator && d>0 && now-_lastMediaPositionPush>1000){
+    if(!IS_NATIVE_SHELL && 'mediaSession' in navigator && d>0 && now-_lastMediaPositionPush>1000){
       _lastMediaPositionPush=now;
       try{ navigator.mediaSession.setPositionState({ duration:d, playbackRate:1, position:clamp(t,0,d) }); }catch(e){}
     }
@@ -2573,7 +2705,7 @@ function sourceLabel(s){ return s==='youtube'?'YouTube':s==='direct'?'Direct aud
 function updateLiveAtmosphere(it=current){const app=$('#app');if(!app)return;if(!it){app.style.removeProperty('--live-hue');app.style.removeProperty('--live-hue2');return;}const x=hashText(trackKey(it));app.style.setProperty('--live-hue',String(x%360));app.style.setProperty('--live-hue2',String((x*7+137)%360));}
 function updateQueueUI(){
   $('#queueCount').textContent=Q.items.length; $('#deckUpNext').textContent=Q.items.length; $('#queueSheetCount').textContent=Q.items.length;
-  renderQueue(); renderFlowQueuePreview();
+  renderQueue(); renderFlowQueuePreview(); renderDriveMode();
   const dn=$('#deckNow');
   dn.innerHTML = current
     ? '<div class="dn-title" dir="auto">'+h(current.title)+'</div><div class="dn-artist" dir="auto">'+h(current.artist||sourceLabel(current.source))+'</div>'
@@ -2628,7 +2760,7 @@ function updateNowPlaying(){
   if(!current){
     c.innerHTML='<div class="np-empty nova-empty"><div class="nova-empty-mark">R</div><b>Nothing playing yet</b><span>Search for a song and tap it. ROZZA handles the rest.</span></div>';
     if(bg) bg.classList.remove('show');
-    repositionYT(); return;
+    postNowPlayingToNative(); renderDriveMode(); repositionYT(); return;
   }
   const art=current.thumbnailURL||FALLBACK_ART;
   if(bg){ bg.style.backgroundImage="url('"+art.replace(/'/g,"\\'")+"')"; bg.classList.add('show'); }
@@ -2894,7 +3026,7 @@ function switchTab(name, options={}){
   if(name==='flow'){ Flow.render(); SmartQueue.ensure(false); }
   if(name==='settings'){ updateConnFromState(); }
 }
-function sheetId(name){return {np:'npSheet',queue:'queueSheet',event:'eventSheet',discovery:'discoverySheet'}[name]||name;}
+function sheetId(name){return {np:'npSheet',queue:'queueSheet',event:'eventSheet',discovery:'discoverySheet',drive:'driveSheet'}[name]||name;}
 function openSheet(name){
   const el=$('#'+sheetId(name)); if(!el)return;
   $('#sheetBackdrop').classList.add('show'); el.classList.add('open');
@@ -2925,6 +3057,14 @@ function wire(){
   $('#minibar').addEventListener('click',e=>{ if(e.target.closest('.mb-btn')) return; openSheet('np'); });
   $('#mbPlay').onclick=e=>{ e.stopPropagation(); Coordinator.toggle(); };
   $('#mbNext').onclick=e=>{ e.stopPropagation(); Coordinator.next(false); };
+  const driveLaunch=$('#driveLaunchBtn'); if(driveLaunch) driveLaunch.onclick=()=>{ renderDriveMode(); openSheet('drive'); };
+  const drivePrev=$('#drivePrev'); if(drivePrev) drivePrev.onclick=()=>window.ROZZANativeControls.remote('previous');
+  const drivePlay=$('#drivePlay'); if(drivePlay) drivePlay.onclick=()=>window.ROZZANativeControls.remote('toggle');
+  const driveNext=$('#driveNext'); if(driveNext) driveNext.onclick=()=>window.ROZZANativeControls.remote('next');
+  const driveLike=$('#driveLike'); if(driveLike) driveLike.onclick=()=>window.ROZZANativeControls.remote('like');
+  const driveRadio=$('#driveRadio'); if(driveRadio) driveRadio.onclick=()=>{ if(!current){toast('Play a song first.','info','DRIVE MODE');return;} Radio.start(current,{playNext:false}); };
+  const driveQueue=$('#driveQueue'); if(driveQueue) driveQueue.onclick=()=>{ closeSheet('drive'); openSheet('queue'); };
+
   const headerQueue=$('#headerQueueBtn'); if(headerQueue) headerQueue.onclick=()=>{ haptic('light'); openSheet('queue'); };
   const homeSearch=$('#homeSearchLauncher'); if(homeSearch) homeSearch.onclick=()=>{ haptic('selection'); switchTab('search'); };
   const hp=$('#homePlay'); if(hp) hp.onclick=()=>{ haptic('medium'); Coordinator.toggle(); };
@@ -2997,7 +3137,8 @@ function wire(){
   $('#clrQueue').onclick=()=>{ clearQueue(); toast('Queue reset','ok','DATA'); };
   $('#clrMirrors').onclick=()=>{ store.del('mirrors'); loadPool(); warmup(); toast('Mirror cache reset','ok','DATA'); };
   $('#queueClear').onclick=()=>{ clearQueue(); toast('Queue cleared','ok','QUEUE'); };
-  const copyDiag=$('#copyDiagnosticsBtn'); if(copyDiag) copyDiag.onclick=async()=>{ const payload='ROZZA 4.0 UNIVERSE\n'+JSON.stringify(ROZZADebug.getState(),null,2)+'\n\n'+ROZZADebug.getLog(); try{await navigator.clipboard.writeText(payload);toast('Diagnostics copied','ok','SUPPORT');}catch(e){toast('Could not access clipboard','warn','SUPPORT');} };
+  const copyVehicleDiag=$('#copyVehicleDiagnosticsBtn'); if(copyVehicleDiag) copyVehicleDiag.onclick=async()=>{ const payload=JSON.stringify(RemoteDiagnostics.snapshot(),null,2); try{await navigator.clipboard.writeText(payload);toast('Vehicle diagnostics copied','ok','DRIVE REMOTE');}catch(e){toast('Could not access clipboard','warn','DRIVE REMOTE');} };
+  const copyDiag=$('#copyDiagnosticsBtn'); if(copyDiag) copyDiag.onclick=async()=>{ const payload='ROZZA 4.1.0 DRIVE REMOTE\n'+JSON.stringify(ROZZADebug.getState(),null,2)+'\n\n'+ROZZADebug.getLog(); try{await navigator.clipboard.writeText(payload);toast('Diagnostics copied','ok','SUPPORT');}catch(e){toast('Could not access clipboard','warn','SUPPORT');} };
   const netRetry=$('#networkRetry'); if(netRetry) netRetry.onclick=()=>{ refreshRegistries().then(()=>warmup()); };
   window.addEventListener('offline',()=>{ const b=$('#networkBanner');if(b)b.classList.add('show');setConn('quiet'); });
   window.addEventListener('online',()=>{ const b=$('#networkBanner');if(b)b.classList.remove('show');refreshRegistries().then(()=>warmup());toast('Back online','ok','CONNECTION'); });

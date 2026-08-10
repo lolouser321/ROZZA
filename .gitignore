@@ -42,7 +42,3 @@ next-env.d.ts
 /work/
 
 # generated iOS build output
-/ios/build/
-/ios/Payload/
-/ios/ROZZA.xcodeproj/
-/ios/*.ipa

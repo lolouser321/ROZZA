@@ -128,7 +128,7 @@ struct ROZZAWebAppView: UIViewRepresentable {
             let timeout = min(max(requestedTimeout, 2.0), 12.0)
             var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: timeout)
             request.setValue("application/json, text/plain, */*", forHTTPHeaderField: "Accept")
-            request.setValue("ROZZA/4.0.5 iOS", forHTTPHeaderField: "User-Agent")
+            request.setValue("ROZZA/4.1.0 iOS", forHTTPHeaderField: "User-Agent")
 
             URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
                 let status = (response as? HTTPURLResponse)?.statusCode ?? 0

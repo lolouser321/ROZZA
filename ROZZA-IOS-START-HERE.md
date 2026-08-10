@@ -1,17 +1,31 @@
-# ROZZA iOS — start here
+# ROZZA iOS — START HERE
 
-The complete native iOS wrapper is in [`ios/`](ios/README.md).
+**Canonical iOS project: repository root.**
 
-It contains the existing ROZZA interface plus:
+Do not build an `ios/` subfolder. ROZZA 4.1.0 Build 26 intentionally removed the old duplicate iOS project so there is only one playback stack and one source of truth.
 
-- native WKWebView hosting
-- the supplied Pure Tube JavaScript bridge
-- `AVAudioSession` playback mode
-- `UIBackgroundModes = audio`
-- Lock Screen and Control Center commands and metadata
-- a new original ROZZA icon and launch screen
-- an unsigned-IPA GitHub Actions workflow
+## Build on macOS
 
-The original compiled Pure Tube executable is not linked or shipped. A complete iOS app executable cannot be reused as a framework; its observed behavior is mapped in [`ios/PURE_TUBE_MAPPING.md`](ios/PURE_TUBE_MAPPING.md).
+```bash
+brew install xcodegen
+chmod +x Scripts/build-unsigned-ipa.sh
+./Scripts/build-unsigned-ipa.sh
+```
 
-Use a Mac with Xcode or run `.github/workflows/ios-ipa.yml` on GitHub. Background YouTube behavior must be verified on a physical iPhone after each iOS/YouTube update.
+The script performs source QA first, generates the root Xcode project, builds the Release iPhone app, validates the packaged HTML/background bridge/native remote-control markers, and writes:
+
+```text
+build/ROZZA-Unsigned.ipa
+```
+
+## Active playback files
+
+- `rozza2.html` — UI, queue, YouTube player, autoplay, Flow/Brain/Event/Drive features
+- `Sources/Playback/DJPlaybackController.swift` — native audio lifecycle, Lock Screen / vehicle / Bluetooth remote commands, Now Playing metadata
+- `Sources/Web/ROZZAWebAppView.swift` — persistent WKWebView + native network bridge
+- `Resources/yt_background_bridge.js` — background-only iframe media bridge
+- `Resources/ROZZA.entitlements` and `Resources/Info.plist` — iOS capabilities/configuration
+
+## Important
+
+The root `Scripts/build-unsigned-ipa.sh` is the supported build route. Physical-iPhone testing is still required for Home/Lock, Bluetooth head units, steering-wheel controls, interruptions, and long background sessions because those lifecycle paths cannot be fully validated by static source tests.

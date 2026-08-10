@@ -4,7 +4,11 @@ on:
   workflow_dispatch:
   push:
     paths:
-      - "ios/**"
+      - "Sources/**"
+      - "Resources/**"
+      - "Scripts/**"
+      - "rozza2.html"
+      - "project.yml"
       - ".github/workflows/ios-ipa.yml"
 
 jobs:
@@ -19,34 +23,14 @@ jobs:
       - name: Install XcodeGen
         run: brew install xcodegen
 
-      - name: Generate Xcode project
-        working-directory: ios
-        run: xcodegen generate
-
-      - name: Build unsigned app
-        working-directory: ios
+      - name: Build and validate unsigned IPA
         run: |
-          xcodebuild \
-            -project ROZZA.xcodeproj \
-            -scheme ROZZA \
-            -configuration Release \
-            -sdk iphoneos \
-            -derivedDataPath build \
-            CODE_SIGNING_ALLOWED=NO \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGN_IDENTITY="" \
-            clean build
-
-      - name: Package IPA
-        working-directory: ios
-        run: |
-          mkdir -p Payload
-          cp -R build/Build/Products/Release-iphoneos/ROZZA.app Payload/ROZZA.app
-          ditto -c -k --sequesterRsrc --keepParent Payload ROZZA-unsigned.ipa
+          chmod +x Scripts/build-unsigned-ipa.sh Scripts/verify-ios-resources.sh
+          ./Scripts/build-unsigned-ipa.sh
 
       - name: Upload IPA
         uses: actions/upload-artifact@v4
         with:
-          name: ROZZA-unsigned-ipa
-          path: ios/ROZZA-unsigned.ipa
+          name: ROZZA-4.1.0-Build26-unsigned-ipa
+          path: build/ROZZA-Unsigned.ipa
           if-no-files-found: error

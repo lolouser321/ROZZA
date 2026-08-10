@@ -66,11 +66,12 @@ check "yt_background_bridge.js present" test -s "$APP_PATH/yt_background_bridge.
 check "CFBundleDisplayName" test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleDisplayName' "$APP_PATH/Info.plist")" = "ROZZA"
 check "CFBundleIconName" test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIconName' "$APP_PATH/Info.plist")" = "AppIcon"
 check "UIBackgroundModes[0]" test "$(/usr/libexec/PlistBuddy -c 'Print :UIBackgroundModes:0' "$APP_PATH/Info.plist")" = "audio"
-check "CFBundleShortVersionString == 4.0.5" test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP_PATH/Info.plist")" = "4.0.5"
-check "CFBundleVersion == 25" test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP_PATH/Info.plist")" = "25"
+check "CFBundleShortVersionString == 4.1.0" test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP_PATH/Info.plist")" = "4.1.0"
+check "CFBundleVersion == 26" test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP_PATH/Info.plist")" = "26"
 
-# Build 25 regression guard: make sure Xcode packaged the new foreground ->
-# native playback-intent handoff instead of a stale HTML or Swift build.
+# Build 26 regression guard: make sure Xcode packaged the new foreground ->
+# native playback-intent handoff and Drive Mode remote-command work instead
+# of a stale HTML or Swift build.
 check_cmp "packaged rozza2.html matches source" "$PROJECT_ROOT/rozza2.html" "$APP_PATH/rozza2.html"
 check_cmp "packaged yt_background_bridge.js matches source" "$PROJECT_ROOT/Resources/yt_background_bridge.js" "$APP_PATH/yt_background_bridge.js"
 check "background handoff wantsPlayback line" grep -q "wantsPlayback: st.source==='youtube' ? !!YT.wantPlay : isPlaying" "$APP_PATH/rozza2.html"
@@ -80,19 +81,27 @@ check "background pulse event (HTML)" grep -q "ROZZA_BACKGROUND_PULSE" "$APP_PAT
 check "background pulse receiver (bridge JS)" grep -q "ROZZA_BACKGROUND_PULSE" "$APP_PATH/yt_background_bridge.js"
 check "mirror pool version 4" grep -q "const MIRROR_POOL_VERSION = 4;" "$APP_PATH/rozza2.html"
 check "current Piped seed present" grep -q "pipedapi.orangenet.cc" "$APP_PATH/rozza2.html"
+check "unified remote command dispatcher" grep -q "window.ROZZANativeControls.remote" "$APP_PATH/rozza2.html"
+check "vehicle previous-track semantics" grep -q "Coordinator.previousTrack()" "$APP_PATH/rozza2.html"
+check "vehicle command diagnostics" grep -q "window.ROZZARemoteDiagnostics=RemoteDiagnostics" "$APP_PATH/rozza2.html"
+check "native Now Playing clear handoff" grep -q "postMessage({ clear:true" "$APP_PATH/rozza2.html"
+check "native queue-index metadata" grep -q "queueIndex: Math.max(0,Q.idx)" "$APP_PATH/rozza2.html"
+check "Drive Mode sheet present" grep -q 'id="driveSheet"' "$APP_PATH/rozza2.html"
+check "continuous playback default" grep -q "continuousPlayback:true" "$APP_PATH/rozza2.html"
 # `strings | grep -q` is unsafe under pipefail: grep -q exits as soon as it
 # finds a match, which can SIGPIPE `strings` mid-write ("failed to flush
 # output") and abort the whole script even though the match was found.
 # Capture to a file once so grep's exit status is the only one that matters.
+#
+# Only ONE compiled-binary string check is kept, and only because it's long
+# enough (34 bytes) to be reliable: Swift's small-string optimization can
+# encode literals under ~15 bytes as a packed inline value with no
+# byte-contiguous representation at all, so `strings` legitimately cannot
+# find short literals like "networkProxy" (12 bytes) or "remote-native-"
+# (14 bytes) even when the code is compiled in and working correctly (this
+# is exactly what broke the previous build). Everything those would have
+# checked is already covered reliably by qa-source.py's source-level greps.
 strings "$APP_PATH/ROZZA" > "$WORK_DIR/rozza-binary-strings.txt" || true
-# No check here for the "networkProxy" message-handler name: at 12 bytes it
-# is short enough for Swift's small-string optimization to encode it as a
-# packed inline value instead of a plain byte run, so it legitimately does
-# not appear in `strings` output even when the code is compiled in and
-# working correctly (confirmed: this check failed on a build where the
-# handler registration and proxyJSONRequest were both present and correct).
-# qa-source.py already verifies the handler exists at the Swift source level,
-# which is the reliable version of this check.
 check "compiled binary contains background-capture log line" grep -q "Background capture wantsPlayback=" "$WORK_DIR/rozza-binary-strings.txt"
 
 ditto "$APP_PATH" "$WORK_DIR/Payload/ROZZA.app"

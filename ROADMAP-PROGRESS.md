@@ -1,3 +1,15 @@
+# ROZZA ROADMAP PROGRESS
+
+## 4.1.0 DRIVE REMOTE · Build 26
+- Native vehicle/Bluetooth/Lock Screen remote command pipeline
+- Idempotent Next/Previous retries with JS acknowledgement
+- Background execution window + post-command background pulses
+- Native-only system media-command ownership on iPhone
+- Now Playing artwork + queue index/count
+- Drive Mode large-control UI
+- Continuous Play setting
+- Canonical root-only iOS project; obsolete duplicate `ios/` build removed
+
 # ROZZA Roadmap Progress — 4.0 Universe
 
 ## Working client-side foundations

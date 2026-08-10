@@ -36,6 +36,11 @@ final class DJPlaybackController: NSObject, ObservableObject {
     private var resumeYouTubeAfterBackgroundTransition = false
     private var backgroundResumeGeneration = 0
     private var backgroundTaskID: UIBackgroundTaskIdentifier = .invalid
+    private var remoteCommandTaskID: UIBackgroundTaskIdentifier = .invalid
+    private var remoteCommandGeneration = 0
+    private var artworkTask: URLSessionDataTask?
+    private var lastArtworkURL: String?
+    private var lastNowPlayingTrackID: String?
     private var statusTimer: Timer?
     private var observers: [NSObjectProtocol] = []
 
@@ -59,6 +64,7 @@ final class DJPlaybackController: NSObject, ObservableObject {
 
     deinit {
         statusTimer?.invalidate()
+        artworkTask?.cancel()
         observers.forEach(NotificationCenter.default.removeObserver)
     }
 
@@ -309,6 +315,86 @@ final class DJPlaybackController: NSObject, ObservableObject {
         backgroundTaskID = .invalid
     }
 
+    private func beginRemoteCommandTask() {
+        guard remoteCommandTaskID == .invalid else { return }
+        remoteCommandTaskID = UIApplication.shared.beginBackgroundTask(withName: "ROZZA.RemoteCommand") { [weak self] in
+            Task { @MainActor in self?.endRemoteCommandTask() }
+        }
+    }
+
+    private func endRemoteCommandTask() {
+        guard remoteCommandTaskID != .invalid else { return }
+        UIApplication.shared.endBackgroundTask(remoteCommandTaskID)
+        remoteCommandTaskID = .invalid
+    }
+
+    /// System controls (car, Bluetooth, AirPods, Lock Screen and Control Center)
+    /// can arrive while the WKWebView is already backgrounded. Give each
+    /// transport request a short native execution window and require a JS-side
+    /// acknowledgement. A failed/delayed evaluateJavaScript gets only two
+    /// bounded retries; commands are never turned into a permanent polling loop.
+    private func dispatchRemoteCommand(_ action: String, value: Double? = nil, shouldPlay: Bool? = nil) {
+        remoteCommandGeneration += 1
+        let generation = remoteCommandGeneration
+        if let shouldPlay { youtubeWantsPlayback = shouldPlay }
+        if shouldPlay == true { _ = configureAudioSession() }
+        beginRemoteCommandTask()
+        performRemoteCommand(action, value: value, generation: generation, attempt: 0)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.2) { [weak self] in
+            guard let self, generation == self.remoteCommandGeneration else { return }
+            self.endRemoteCommandTask()
+        }
+    }
+
+    private func performRemoteCommand(_ action: String, value: Double?, generation: Int, attempt: Int) {
+        guard generation == remoteCommandGeneration else { return }
+        let jsValue = value.map { String(format: "%.3f", $0) } ?? "null"
+        evaluateYouTube("""
+        (() => {
+          if (!window.ROZZANativeControls || typeof window.ROZZANativeControls.remote !== 'function') {
+            return { ok:false, reason:'remote-bridge-missing' };
+          }
+          const result = window.ROZZANativeControls.remote('\(action)', \(jsValue), \(generation));
+          return JSON.stringify(result || { ok:false, reason:'empty-ack' });
+        })()
+        """) { [weak self] result, error in
+            guard let self, generation == self.remoteCommandGeneration else { return }
+            var ack: [String: Any]?
+            if let json = result as? String, let data = json.data(using: .utf8) {
+                ack = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+            }
+            let ok = error == nil && (ack?["ok"] as? Bool) == true
+            if let wantsPlayback = ack?["wantsPlayback"] as? Bool {
+                self.youtubeWantsPlayback = wantsPlayback
+            }
+            print("[ROZZA REMOTE] action=\(action) attempt=\(attempt + 1) ok=\(ok) result=", ack ?? [:], "error=", error?.localizedDescription ?? "none")
+            if !ok && attempt < 2 {
+                let delay = attempt == 0 ? 0.12 : 0.38
+                DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                    self?.performRemoteCommand(action, value: value, generation: generation, attempt: attempt + 1)
+                }
+                return
+            }
+
+            // For a remote Play/Next/Previous while backgrounded, the JS
+            // command switches the queue first. Then pulse the real iframe
+            // video for that newly selected track so the vehicle action does
+            // not depend on a stale outer YouTube player state.
+            if ok,
+               UIApplication.shared.applicationState != .active,
+               self.youtubeWantsPlayback,
+               action == "play" || action == "toggle" || action == "next" || action == "previous" || action == "dislike" {
+                [0.08, 0.30, 0.82].forEach { delay in
+                    DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                        guard let self, generation == self.remoteCommandGeneration, self.youtubeWantsPlayback else { return }
+                        _ = self.configureAudioSession()
+                        self.evaluateYouTube("if(window.ROZZANativeControls) window.ROZZANativeControls.backgroundResumeIfWanted('remote-native-\(action)');")
+                    }
+                }
+            }
+        }
+    }
+
     /// Replays the same explicit PLAY route that already works from Control
     /// Center, but does it automatically during the short Home/lock transition.
     /// The JS side re-checks current source + user intent on every attempt, so
@@ -479,26 +565,55 @@ final class DJPlaybackController: NSObject, ObservableObject {
     private func clamp(_ value: Float) -> Float { min(1, max(0, value)) }
 
     func updateNowPlaying(info: [String: Any]) {
-        var nowPlayingInfo = [String: Any]()
+        if (info["clear"] as? Bool) == true {
+            artworkTask?.cancel()
+            artworkTask = nil
+            lastArtworkURL = nil
+            lastNowPlayingTrackID = nil
+            isYouTubePlaying = false
+            youtubeWantsPlayback = false
+            MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
+            return
+        }
+
+        var nowPlayingInfo = MPNowPlayingInfoCenter.default().nowPlayingInfo ?? [:]
+        if let trackID = info["trackID"] as? String, trackID != lastNowPlayingTrackID {
+            // Never leave the previous song's cover art visible while the new
+            // artwork is still downloading (or if that download fails).
+            artworkTask?.cancel()
+            artworkTask = nil
+            lastArtworkURL = nil
+            lastNowPlayingTrackID = trackID
+            nowPlayingInfo.removeValue(forKey: MPMediaItemPropertyArtwork)
+        }
         if let title = info["title"] as? String {
             nowPlayingInfo[MPMediaItemPropertyTitle] = title
         }
         if let artist = info["artist"] as? String {
             nowPlayingInfo[MPMediaItemPropertyArtist] = artist
         }
-        if let duration = info["duration"] as? Double, duration > 0 {
+        if let duration = (info["duration"] as? NSNumber)?.doubleValue, duration > 0 {
+            nowPlayingInfo[MPMediaItemPropertyPlaybackDuration] = duration
+        } else if let duration = info["duration"] as? Double, duration > 0 {
             nowPlayingInfo[MPMediaItemPropertyPlaybackDuration] = duration
         }
-        if let elapsed = info["elapsed"] as? Double {
+        if let elapsed = (info["elapsed"] as? NSNumber)?.doubleValue {
+            nowPlayingInfo[MPNowPlayingInfoPropertyElapsedPlaybackTime] = elapsed
+        } else if let elapsed = info["elapsed"] as? Double {
             nowPlayingInfo[MPNowPlayingInfoPropertyElapsedPlaybackTime] = elapsed
         }
+        if let queueIndex = (info["queueIndex"] as? NSNumber)?.intValue {
+            nowPlayingInfo[MPNowPlayingInfoPropertyPlaybackQueueIndex] = max(0, queueIndex)
+        }
+        if let queueCount = (info["queueCount"] as? NSNumber)?.intValue, queueCount > 0 {
+            nowPlayingInfo[MPNowPlayingInfoPropertyPlaybackQueueCount] = queueCount
+        }
+        nowPlayingInfo[MPNowPlayingInfoPropertyDefaultPlaybackRate] = 1.0
         if let isPlaying = info["isPlaying"] as? Bool {
             nowPlayingInfo[MPNowPlayingInfoPropertyPlaybackRate] = isPlaying ? 1.0 : 0.0
 
-            // Main ROZZA -> native playback state handoff. The old Build 21
-            // updated Lock Screen metadata here but never updated
-            // isYouTubePlaying/youtubeWantsPlayback, leaving native lifecycle
-            // code blind until the background-only bridge woke up.
+            // Main ROZZA -> native playback state handoff. This remains the
+            // authoritative source for lifecycle + remote-command intent.
             let source = (info["source"] as? String)?.lowercased()
             if source == "youtube" {
                 isYouTubePlaying = isPlaying
@@ -509,6 +624,30 @@ final class DJPlaybackController: NSObject, ObservableObject {
             }
         }
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nowPlayingInfo
+
+        if let artworkURL = info["artworkURL"] as? String, !artworkURL.isEmpty {
+            updateNowPlayingArtwork(urlString: artworkURL)
+        }
+    }
+
+    private func updateNowPlayingArtwork(urlString: String) {
+        guard urlString != lastArtworkURL,
+              let url = URL(string: urlString),
+              let scheme = url.scheme?.lowercased(),
+              scheme == "https" else { return }
+        lastArtworkURL = urlString
+        artworkTask?.cancel()
+        artworkTask = URLSession.shared.dataTask(with: url) { [weak self] data, _, _ in
+            guard let data, let image = UIImage(data: data) else { return }
+            DispatchQueue.main.async {
+                guard let self, self.lastArtworkURL == urlString else { return }
+                let artwork = MPMediaItemArtwork(boundsSize: image.size) { _ in image }
+                var info = MPNowPlayingInfoCenter.default().nowPlayingInfo ?? [:]
+                info[MPMediaItemPropertyArtwork] = artwork
+                MPNowPlayingInfoCenter.default().nowPlayingInfo = info
+            }
+        }
+        artworkTask?.resume()
     }
 
     private func updateNativePlaybackState(isPlaying: Bool, payload: [String: Any]) {
@@ -523,74 +662,60 @@ final class DJPlaybackController: NSObject, ObservableObject {
     private func configureRemoteCommands() {
         let center = MPRemoteCommandCenter.shared()
 
-        // PLAY must explicitly play; PAUSE must explicitly pause. Both used to
-        // call Coordinator.toggle() — if native and JS state disagreed even
-        // briefly, "Play" could issue a pause and vice versa. Only the actual
-        // togglePlayPauseCommand below uses toggle semantics.
         center.playCommand.isEnabled = true
         center.playCommand.addTarget { [weak self] _ in
-            print("[ROZZA NATIVE] Remote command: play")
-            Task { @MainActor in
-                self?.youtubeWantsPlayback = true
-                self?.configureAudioSession()
-                self?.evaluateYouTube("if(window.ROZZANativeControls) { window.ROZZANativeControls.play(); }")
-                if self?.avPlayer.currentItem != nil { self?.playAVPlayer() }
-            }
+            Task { @MainActor in self?.dispatchRemoteCommand("play", shouldPlay: true) }
             return .success
         }
 
         center.pauseCommand.isEnabled = true
         center.pauseCommand.addTarget { [weak self] _ in
-            print("[ROZZA NATIVE] Remote command: pause")
-            Task { @MainActor in
-                self?.youtubeWantsPlayback = false
-                self?.evaluateYouTube("if(window.ROZZANativeControls) { window.ROZZANativeControls.pause(); }")
-                self?.pauseAVPlayer(reason: "Lockscreen pause")
-            }
+            Task { @MainActor in self?.dispatchRemoteCommand("pause", shouldPlay: false) }
+            return .success
+        }
+
+        center.stopCommand.isEnabled = true
+        center.stopCommand.addTarget { [weak self] _ in
+            Task { @MainActor in self?.dispatchRemoteCommand("stop", shouldPlay: false) }
             return .success
         }
 
         center.togglePlayPauseCommand.isEnabled = true
         center.togglePlayPauseCommand.addTarget { [weak self] _ in
-            print("[ROZZA NATIVE] Remote command: togglePlayPause")
-            Task { @MainActor in
-                self?.configureAudioSession()
-                self?.evaluateYouTube("if(window.Coordinator && typeof window.Coordinator.toggle === 'function') { window.Coordinator.toggle(); }")
-                if let isPlaying = self?.isAVPlayerPlaying, isPlaying {
-                    self?.pauseAVPlayer(reason: "Lockscreen toggle")
-                } else if self?.avPlayer.currentItem != nil {
-                    self?.playAVPlayer()
-                }
-            }
+            Task { @MainActor in self?.dispatchRemoteCommand("toggle") }
             return .success
         }
 
         center.nextTrackCommand.isEnabled = true
         center.nextTrackCommand.addTarget { [weak self] _ in
-            print("[ROZZA NATIVE] Remote command: next")
-            Task { @MainActor in
-                self?.evaluateYouTube("if(window.Coordinator && typeof window.Coordinator.next === 'function') window.Coordinator.next(false);")
-            }
+            Task { @MainActor in self?.dispatchRemoteCommand("next", shouldPlay: true) }
             return .success
         }
 
         center.previousTrackCommand.isEnabled = true
         center.previousTrackCommand.addTarget { [weak self] _ in
-            print("[ROZZA NATIVE] Remote command: previous")
-            Task { @MainActor in
-                self?.evaluateYouTube("if(window.Coordinator && typeof window.Coordinator.prev === 'function') window.Coordinator.prev();")
-            }
+            Task { @MainActor in self?.dispatchRemoteCommand("previous", shouldPlay: true) }
             return .success
         }
 
         center.changePlaybackPositionCommand.isEnabled = true
         center.changePlaybackPositionCommand.addTarget { [weak self] event in
-            guard let posEvent = event as? MPChangePlaybackPositionCommandEvent else { return .commandFailed }
-            let seconds = posEvent.positionTime
-            Task { @MainActor in
-                self?.evaluateYouTube("if(window.Coordinator && typeof window.Coordinator.seek === 'function') window.Coordinator.seek(\(seconds));")
-                await self?.avPlayer.seek(to: CMTime(seconds: seconds, preferredTimescale: 600))
-            }
+            guard let event = event as? MPChangePlaybackPositionCommandEvent else { return .commandFailed }
+            Task { @MainActor in self?.dispatchRemoteCommand("seekTo", value: event.positionTime) }
+            return .success
+        }
+
+        // Some vehicle and accessory surfaces expose feedback commands. When
+        // available, Like teaches ROZZA Brain and Dislike advances immediately.
+        center.likeCommand.isEnabled = true
+        center.likeCommand.addTarget { [weak self] _ in
+            Task { @MainActor in self?.dispatchRemoteCommand("like") }
+            return .success
+        }
+
+        center.dislikeCommand.isEnabled = true
+        center.dislikeCommand.addTarget { [weak self] _ in
+            Task { @MainActor in self?.dispatchRemoteCommand("dislike", shouldPlay: true) }
             return .success
         }
     }
