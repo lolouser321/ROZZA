@@ -85,7 +85,14 @@ check "current Piped seed present" grep -q "pipedapi.orangenet.cc" "$APP_PATH/ro
 # output") and abort the whole script even though the match was found.
 # Capture to a file once so grep's exit status is the only one that matters.
 strings "$APP_PATH/ROZZA" > "$WORK_DIR/rozza-binary-strings.txt" || true
-check "compiled binary contains networkProxy" grep -q "networkProxy" "$WORK_DIR/rozza-binary-strings.txt"
+# No check here for the "networkProxy" message-handler name: at 12 bytes it
+# is short enough for Swift's small-string optimization to encode it as a
+# packed inline value instead of a plain byte run, so it legitimately does
+# not appear in `strings` output even when the code is compiled in and
+# working correctly (confirmed: this check failed on a build where the
+# handler registration and proxyJSONRequest were both present and correct).
+# qa-source.py already verifies the handler exists at the Swift source level,
+# which is the reliable version of this check.
 check "compiled binary contains background-capture log line" grep -q "Background capture wantsPlayback=" "$WORK_DIR/rozza-binary-strings.txt"
 
 ditto "$APP_PATH" "$WORK_DIR/Payload/ROZZA.app"
