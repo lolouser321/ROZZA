@@ -755,7 +755,7 @@ html,body{background:#050507}
             <div class="set-row"><div class="sl">Reset source cache</div><button class="text-action" id="clrMirrors">Reset</button></div>
           </div>
           <div class="settings-group"><div class="settings-label">Support</div><div class="set-row"><div><div class="sl">Playback diagnostics</div><div class="sd">Copy a private technical timeline when something fails</div></div><button class="text-action" id="copyDiagnosticsBtn">Copy</button></div></div>
-          <div class="ver">ROZZA 4.0.3 · SEARCH HOTFIX</div>
+          <div class="ver">ROZZA 4.0.5 · PERFORMANCE AUTOPLAY</div>
         </section>
       </main>
 
@@ -969,6 +969,36 @@ const store = {
   del(k){ try{ localStorage.removeItem('rozza.'+k); }catch(e){} }
 };
 
+
+/* ---------------- NATIVE NETWORK FALLBACK ----------------
+   Search/discovery metadata comes from public HTTPS APIs. WKWebView's fetch()
+   is still subject to browser CORS, so a healthy API can look "offline" on
+   iPhone even though Safari/URLSession can reach it. The native shell exposes
+   a tiny HTTPS-only URLSession transport. Browser builds simply fall back to
+   normal fetch/gateways. */
+const ROZZANativeNetwork = (() => {
+  const pending = new Map();
+  function available(){ return !!window.webkit?.messageHandlers?.networkProxy; }
+  function get(url, timeoutMs=8000){
+    if(!available()) return Promise.reject(new Error('native-network-unavailable'));
+    const id='net_'+uid()+'_'+Date.now();
+    return new Promise((resolve,reject)=>{
+      const timer=setTimeout(()=>{ pending.delete(id); reject(new Error('native-network-timeout')); }, Math.min(Math.max(timeoutMs+800,2800),13000));
+      pending.set(id,{resolve,reject,timer});
+      try{ window.webkit.messageHandlers.networkProxy.postMessage({id,url,timeoutMs}); }
+      catch(e){ clearTimeout(timer); pending.delete(id); reject(e); }
+    });
+  }
+  function _resolve(id,result){
+    const p=pending.get(id); if(!p) return;
+    clearTimeout(p.timer); pending.delete(id);
+    if(result && result.ok) p.resolve(result.text||'');
+    else p.reject(new Error('native-http-'+(result?.status||0)+(result?.error?':'+result.error:'')));
+  }
+  return {available,get,_resolve};
+})();
+window.ROZZANativeNetwork=ROZZANativeNetwork;
+
 function fmtTime(s){ s=Math.max(0,Math.floor(s||0)); if(!isFinite(s)) s=0; const m=Math.floor(s/60), ss=s%60; return m+':'+String(ss).padStart(2,'0'); }
 function fmtViews(n){ n=+n||0; if(n<=0) return ''; if(n>=1e9) return (n/1e9).toFixed(1).replace(/\.0$/,'')+'B'; if(n>=1e6) return (n/1e6).toFixed(1).replace(/\.0$/,'')+'M'; if(n>=1e3) return (n/1e3).toFixed(1).replace(/\.0$/,'')+'K'; return ''+n; }
 
@@ -978,27 +1008,25 @@ function tokenizeTaste(v){ return String(v||'').toLowerCase().replace(/[^a-z0-9\
 function fmtCompactMinutes(sec){ const m=Math.round((sec||0)/60); if(m<60)return m+'m'; const h=Math.floor(m/60),r=m%60; return h+'h'+(r?' '+r+'m':''); }
 
 /* ---------------- MIRROR REGISTRY + RACING ---------------- */
-// Search-source pool v3. The first group is intentionally made of
-// CORS-capable Piped instances from the current TeamPiped public-instance
-// list so iOS/WKWebView can query them directly instead of depending on
-// fragile public CORS relays. Invidious remains a fallback only.
-const MIRROR_POOL_VERSION = 3;
-const PRIMARY_PIPED = [
-  'pipedapi.syncpundit.io',
-  'api-piped.mha.fi',
-  'piped-api.garudalinux.org',
-  'pipedapi.rivo.lol',
-  'yapi.vyper.me',
-  'api.looleh.xyz',
-  'piped-api.cfe.re',
-  'pipedapi.r4fo.com',
-  'pipedapi.darkness.services'
-];
+const MIRROR_POOL_VERSION = 4;
 const SEEDS = [
-  ...PRIMARY_PIPED.map(h => [h,'piped']),
-  ['pipedapi.kavin.rocks','piped'],['pipedapi.leptons.xyz','piped'],
-  ['api.piped.private.coffee','piped'],['pipedapi.adminforge.de','piped'],['api.piped.yt','piped'],
-  ['yewtu.be','invidious'],['inv.nadeko.net','invidious'],['iv.nboeck.de','invidious']
+  ['pipedapi.kavin.rocks','piped'],
+  ['pipedapi.leptons.xyz','piped'],
+  ['pipedapi.nosebs.ru','piped'],
+  ['pipedapi-libre.kavin.rocks','piped'],
+  ['piped-api.privacy.com.de','piped'],
+  ['pipedapi.adminforge.de','piped'],
+  ['api.piped.yt','piped'],
+  ['pipedapi.drgns.space','piped'],
+  ['piapi.ggtyler.dev','piped'],
+  ['pipedapi.owo.si','piped'],
+  ['pipedapi.ducks.party','piped'],
+  ['piped-api.codespace.cz','piped'],
+  ['pipedapi.reallyaweso.me','piped'],
+  ['api.piped.private.coffee','piped'],
+  ['pipedapi.orangenet.cc','piped'],
+  ['inv.thepixora.com','invidious'],['yewtu.be','invidious'],['inv.nadeko.net','invidious'],
+  ['invidious.nerdvpn.de','invidious'],['iv.nboeck.de','invidious']
 ];
 const REGISTRIES = [
   { url:'https://piped-instances.kavin.rocks/', k:'piped' },
@@ -1015,22 +1043,20 @@ let pool = [];
 
 function hostOf(u){ try{ return new URL(u).host; }catch(e){ return ''; } }
 function loadPool(){
-  // Build 22 could inherit an old, high-scoring mirror list indefinitely.
-  // Reset it once when the curated source schema changes, then preserve health
-  // scores again from that point forward.
-  const sameVersion = store.get('mirrorPoolVersion', 0) === MIRROR_POOL_VERSION;
+  const sameVersion = store.get('mirrorPoolVersion',0) === MIRROR_POOL_VERSION;
   const saved = sameVersion ? store.get('mirrors', null) : null;
-  const map = new Map();
-  if(Array.isArray(saved)) saved.forEach(m => { if(m && m.h) map.set(m.h, m); });
-  SEEDS.forEach(([hh,kk],i) => {
-    const preferred = PRIMARY_PIPED.includes(hh);
-    const existing = map.get(hh);
-    if(existing){ existing.k=kk; existing.preferred=preferred; }
-    else map.set(hh, { h:hh, k:kk, score:preferred?12:5, lastOk:0, fails:0, gw:0, latency:0, preferred });
+  const map = new Map(), now=Date.now();
+  if(Array.isArray(saved)) saved.forEach(m => {
+    if(!m || !m.h) return;
+    const age=m.lastOk ? now-m.lastOk : Infinity;
+    const clean=Object.assign({score:4,lastOk:0,fails:0,gw:0,latency:0},m);
+    if(age>30*60*1000) clean.score=Math.min(clean.score||0,5);
+    if(age>6*60*60*1000) clean.fails=Math.max(clean.fails||0,1);
+    map.set(clean.h,clean);
   });
+  SEEDS.forEach(([hh,kk]) => { if(!map.has(hh)) map.set(hh, { h:hh, k:kk, score:5, lastOk:0, fails:0, gw:0, latency:0 }); });
   pool = [...map.values()];
-  pool.sort((a,b)=> (b.preferred?1:0)-(a.preferred?1:0) || b.score-a.score || b.lastOk-a.lastOk);
-  store.set('mirrorPoolVersion', MIRROR_POOL_VERSION);
+  store.set('mirrorPoolVersion',MIRROR_POOL_VERSION);
 }
 function savePool(){ store.set('mirrors', pool.map(m => ({h:m.h,k:m.k,score:m.score,lastOk:m.lastOk,fails:m.fails,gw:m.gw}))); }
 function upsert(m){
@@ -1045,10 +1071,18 @@ function fetchWithTimeout(url, ms){
 }
 async function fetchJsonViaGateways(targetUrl, ms){
   let last;
-  for(const g of [0,1,2,3]){
+  // iPhone first: URLSession bypasses WKWebView CORS and avoids depending on
+  // unrelated public CORS-proxy services just to read JSON metadata.
+  if(ROZZANativeNetwork.available()){
+    try{ return {json:JSON.parse(await ROZZANativeNetwork.get(targetUrl,ms)),gw:-1}; }
+    catch(e){ last=e; }
+  }
+  const fallbackGateways=ROZZANativeNetwork.available()?[0,1]:[0,1,2,3];
+  const fallbackMs=ROZZANativeNetwork.available()?Math.min(ms,3000):ms;
+  for(const g of fallbackGateways){
     const url = GATEWAYS[g](targetUrl);
     try{
-      const r = await fetchWithTimeout(url, ms);
+      const r = await fetchWithTimeout(url, fallbackMs);
       if(!r.ok) throw new Error('http '+r.status);
       return { json: JSON.parse(await r.text()), gw:g };
     }catch(e){ last = e; }
@@ -1057,12 +1091,20 @@ async function fetchJsonViaGateways(targetUrl, ms){
 }
 async function mirrorGet(m, path, ms=7000){
   const target = 'https://' + m.h + path;
-  const order = [m.gw||0, 0,1,2,3].filter((v,i,a)=>a.indexOf(v)===i);
   let last;
+  if(ROZZANativeNetwork.available()){
+    try{
+      const text=await ROZZANativeNetwork.get(target,ms);
+      const parsed=JSON.parse(text); m.gw=-1; return parsed;
+    }catch(e){ last=e; }
+  }
+  const baseOrder = [m.gw>=0?m.gw:0, 0,1,2,3].filter((v,i,a)=>a.indexOf(v)===i);
+  const order=ROZZANativeNetwork.available()?baseOrder.slice(0,2):baseOrder;
+  const fallbackMs=ROZZANativeNetwork.available()?Math.min(ms,3000):ms;
   for(const g of order){
     const url = GATEWAYS[g](target);
     try{
-      const r = await fetchWithTimeout(url, ms);
+      const r = await fetchWithTimeout(url, fallbackMs);
       if(!r.ok) throw new Error('http '+r.status);
       m.gw = g; return await r.json();
     }catch(e){ last = e; }
@@ -1085,38 +1127,35 @@ async function refreshRegistries(){
   savePool();
 }
 async function healthCheck(m){
-  // Piped's healthcheck is not guaranteed to be JSON. The old code sent it
-  // through mirrorGet(), which always called response.json() and could mark a
-  // healthy server dead simply because the health response was plain text.
-  const path = m.k === 'piped' ? '/healthcheck' : '/api/v1/stats';
-  const target = 'https://' + m.h + path;
-  const order = [m.gw||0, 0,1,2,3].filter((v,i,a)=>a.indexOf(v)===i);
+  const path = m.k === 'piped' ? '/trending?region=US' : '/api/v1/stats';
   const t0 = performance.now();
-  for(const g of order){
-    try{
-      const r = await fetchWithTimeout(GATEWAYS[g](target), 4500);
-      if(!r.ok) throw new Error('http '+r.status);
-      m.gw=g; m.lastOk=Date.now(); m.score=clamp(m.score+2,0,20); m.latency=performance.now()-t0; return true;
-    }catch(_){ }
-  }
-  m.fails++; m.score=clamp(m.score-2,0,20); return false;
+  try{ await mirrorGet(m, path, 4500); m.lastOk = Date.now(); m.score = clamp(m.score+1,0,20); m.latency = performance.now()-t0; return true; }
+  catch(e){ m.fails++; m.score = clamp(m.score-1,0,20); return false; }
 }
-async function warmup(){
+async function warmup(count=2){
   setConn('searching');
-  await Promise.all(pickMirrors(5).map(healthCheck));
+  await Promise.all(pickMirrors(count).map(healthCheck));
   savePool(); updateConnFromState();
 }
-function pickMirrors(n=6, exclude=new Set()){
-  const liveCutoff=Date.now()-12*60*1000;
-  const rank = m => (m.lastOk&&m.lastOk>liveCutoff?1000:0) + (m.preferred?200:0) + (m.k==='piped'?50:0) + (m.score||0)*4 - (m.fails||0)*2 - Math.min(40,(m.latency||0)/250);
-  // Do not deliberately replace a healthy Piped candidate with Invidious.
-  // In 2026 many public Invidious nodes disable API endpoints to control abuse;
-  // they remain useful as a fallback only when they have actually been healthy.
-  const candidates=pool.filter(m=>!exclude.has(m.h)).sort((a,b)=>rank(b)-rank(a));
+function pickMirrors(n=5){
+  const now=Date.now();
+  const ranked=pool.slice().sort((a,b)=>{
+    const al=!!(a.lastOk&&now-a.lastOk<12*60*1000), bl=!!(b.lastOk&&now-b.lastOk<12*60*1000);
+    if(al!==bl) return bl-al;
+    if((b.score||0)!==(a.score||0)) return (b.score||0)-(a.score||0);
+    if((a.fails||0)!==(b.fails||0)) return (a.fails||0)-(b.fails||0);
+    return (a.latency||99999)-(b.latency||99999);
+  });
   const out=[];
-  for(const m of candidates){ if(out.length>=n) break; if(!out.includes(m)) out.push(m); }
-  return out;
+  const best=ranked[0]; if(best) out.push(best);
+  if(n>1 && best){
+    const opposite=ranked.find(m=>m.k!==best.k);
+    if(opposite) out.push(opposite);
+  }
+  for(const m of ranked){ if(out.length>=n) break; if(!out.includes(m)) out.push(m); }
+  return out.slice(0,n);
 }
+
 function setConn(mode){
   const dot = $('#connDot'), lab = $('#connLabel');
   dot.className = 'cdot ' + mode;
@@ -1189,32 +1228,20 @@ function cacheGet(map,key,ttl){ const v=map.get(key); if(!v) return null; if(Dat
 function cacheSet(map,key,value){ map.set(key,{at:Date.now(),value}); if(map.size>40) map.delete(map.keys().next().value); }
 function filterFor(kind, f){ if(kind==='piped') return f==='songs' ? 'music_songs' : f==='videos' ? 'videos' : 'all'; return 'video'; }
 async function runSearchOn(m, q, f, page, nextpage){
-  const t0 = performance.now();
-  let json, items=[];
+  let path;
   if(m.k==='piped'){
     const ff = filterFor('piped', f);
-    const isNext = !!(nextpage && m === (lastSearch && lastSearch.winner));
-    const primaryPath = isNext
+    path = (nextpage && m === (lastSearch && lastSearch.winner))
       ? `/nextpage/search?q=${enc(q)}&filter=${ff}&nextpage=${enc(nextpage)}`
       : `/search?q=${enc(q)}&filter=${ff}`;
-    try{
-      json = await mirrorGet(m, primaryPath, 7000);
-      items = normalize(json, m.k);
-    }catch(e){
-      // Some public Piped nodes temporarily reject one search filter while the
-      // generic search endpoint still works. Fall through to 'all' below.
-      if(isNext || ff==='all') throw e;
-    }
-    if(!items.length && !isNext && ff!=='all'){
-      json = await mirrorGet(m, `/search?q=${enc(q)}&filter=all`, 7000);
-      items = normalize(json, m.k);
-    }
   } else {
-    json = await mirrorGet(m, `/api/v1/search?q=${enc(q)}&type=video&page=${page||1}`, 7000);
-    items = normalize(json, m.k);
+    path = `/api/v1/search?q=${enc(q)}&type=video&page=${page||1}`;
   }
+  const t0 = performance.now();
+  const json = await mirrorGet(m, path, 8000);
+  const items = normalize(json, m.k);
   if(!items.length) throw new Error('empty');
-  m.lastOk = Date.now(); m.fails = Math.max(0,(m.fails||0)-1); m.score = clamp(m.score+3,0,20); m.latency = performance.now()-t0;
+  m.lastOk = Date.now(); m.score = clamp(m.score+3,0,20); m.latency = performance.now()-t0;
   return { mirror:m, items, nextpage: json && json.nextpage ? json.nextpage : null, kind:m.k };
 }
 async function searchRace(q, f, opts={}){
@@ -1224,28 +1251,21 @@ async function searchRace(q, f, opts={}){
     if(cached){ setConn('connected'); return cached; }
   }
   setConn('searching');
+  // Keep the fast path light: three best sources first, then expand only if
+  // they fail. Older builds fired 5-10 simultaneous requests for every query,
+  // which competed with YouTube/WKWebView work on slower phones.
+  const cands = pickMirrors(Math.min(8,Math.max(4,pool.length)));
   const page = opts.page || 1, nextpage = opts.nextpage || null;
-  const tried = new Set();
-  let attempts=[];
-  const runWave = async (count) => {
-    const cands=pickMirrors(count,tried);
-    cands.forEach(m=>tried.add(m.h));
-    const wave=cands.map(m => runSearchOn(m,q,f,page,nextpage).catch(e => { m.score=clamp(m.score-2,0,20); m.fails=(m.fails||0)+1; return null; }));
-    attempts.push(...wave);
-    return await raceFor(wave, r => r && r.items && r.items.length);
-  };
-  let result;
-  try{
-    // First wave is intentionally small and biased toward known CORS-capable
-    // Piped nodes, so a normal search returns quickly.
-    result=await runWave(6);
-  }catch(firstError){
-    // Do not turn one bad set of public instances into a dead app. Refresh the
-    // registry and immediately race a second, disjoint wave before failing UI.
-    try{ await refreshRegistries(); }catch(_){ }
-    result=await runWave(6);
+  const makeAttempts = list => list.map(m => runSearchOn(m, q, f, page, nextpage).catch(e => { m.score = clamp(m.score-2,0,20); m.fails++; return null; }));
+  const wave1=makeAttempts(cands.slice(0,3));
+  let attempts=wave1, result;
+  try{ result=await raceFor(wave1, r => r && r.items && r.items.length); }
+  catch(firstError){
+    const wave2=makeAttempts(cands.slice(3)); attempts=wave1.concat(wave2);
+    if(!wave2.length) throw firstError;
+    result=await raceFor(wave2, r => r && r.items && r.items.length);
   }
-  setConn('connected'); updateConnFromState(); savePool();
+  setConn('connected'); updateConnFromState();
   const merged = new Map(); result.items.forEach(it => merged.set(it.id, it));
   Promise.all(attempts).then(rest => {
     rest.forEach(r => { if(r && r.items) r.items.forEach(it => { if(!merged.has(it.id)) merged.set(it.id, it); }); });
@@ -1261,7 +1281,7 @@ async function fetchSuggestions(q){
   const key=q.toLowerCase();
   const cached=cacheGet(SuggestionCache,key,SUGGEST_CACHE_TTL);
   if(cached) return cached;
-  const ps = pickMirrors(4).map(async m => {
+  const ps = pickMirrors(6).map(async m => {
     const path = m.k==='piped' ? `/suggestions?query=${enc(q)}` : `/api/v1/search/suggestions?q=${enc(q)}`;
     const j = await mirrorGet(m, path, 5000);
     const arr = Array.isArray(j) ? j : (j && j.suggestions) || [];
@@ -1280,7 +1300,7 @@ async function prefetchSuggestionTrack(query){
 }
 
 async function lookupVideo(id){
-  const ps = pickMirrors(4).map(async m => {
+  const ps = pickMirrors(6).map(async m => {
     if(m.k==='piped'){
       const j = await mirrorGet(m, `/streams/${id}`, 6000);
       return { id, title:j.title||('YouTube '+id), artist:j.uploader||null,
@@ -1421,7 +1441,7 @@ const Audio = (() => {
     el.addEventListener('timeupdate', () => UI.onTime(el.currentTime, el.duration));
     el.addEventListener('loadedmetadata', () => { UI.onTime(el.currentTime, el.duration); SessionState.applyIfPending('audio'); });
     el.addEventListener('waiting', () => { if(PlaybackState.get().source==='audio') PlaybackState.set({status:'buffering'}); });
-    el.addEventListener('play', () => { if(PlaybackState.get().source==='audio') PlaybackState.set({status:'playing'}); UI.onPlayState(true); });
+    el.addEventListener('play', () => { if(PlaybackState.get().source==='audio') PlaybackState.set({status:'playing'}); UI.onPlayState(true); const stableTrack=current; setTimeout(()=>{ if(current===stableTrack && Audio.playing) SmartQueue.ensure(false); },5000); });
     el.addEventListener('pause', () => { if(PlaybackState.get().source==='audio' && !el.ended) PlaybackState.set({status:'paused'}); UI.onPlayState(false); });
     el.addEventListener('ended', () => Coordinator.onEnded());
     el.addEventListener('error', () => Coordinator.onAudioError());
@@ -1507,9 +1527,20 @@ const YT = (() => {
       event:'ROZZA_BACKGROUND_MODE',
       enabled:backgroundBridgeEnabled,
       shouldPlay:!!shouldPlay,
+      videoId:currentId,
       reason:String(reason||'native-lifecycle')
     });
     ROZZADebug.yt('BACKGROUND BRIDGE enabled='+backgroundBridgeEnabled+' shouldPlay='+!!shouldPlay+' reason='+reason);
+  }
+  function pulseBackgroundBridge(reason='native-pulse'){
+    if(!backgroundBridgeEnabled || !wantPlay) return;
+    post({
+      event:'ROZZA_BACKGROUND_PULSE',
+      shouldPlay:true,
+      videoId:currentId,
+      reason:String(reason||'native-pulse')
+    });
+    ROZZADebug.yt('BACKGROUND PULSE reason='+reason+' id='+(currentId||'none'));
   }
   // Keep the iframe-side background bridge aware of the user's playback
   // intent while the app is still fully foregrounded. Because the bridge is
@@ -1520,25 +1551,53 @@ const YT = (() => {
     post({
       event:'ROZZA_BACKGROUND_INTENT',
       shouldPlay:!!shouldPlay,
+      videoId:currentId,
       reason:String(reason||'intent-sync')
     });
-    ROZZADebug.yt('BACKGROUND INTENT shouldPlay='+!!shouldPlay+' reason='+reason);
+    ROZZADebug.yt('BACKGROUND INTENT shouldPlay='+!!shouldPlay+' reason='+reason+' id='+(currentId||'none'));
   }
   function cmd(f,a){ post({event:'command', func:f, args:a||[], id:'rozza', channel:'widget'}); }
-  function poll(){ stopPoll(); pollT=setInterval(()=>{ if(!ready) return; cmd('getCurrentTime',[]); cmd('getDuration',[]); cmd('getPlayerState',[]); cmd('getVolume',[]); },700); }
+  function poll(){
+    stopPoll();
+    let tick=0;
+    pollT=setInterval(()=>{
+      if(!ready) return;
+      tick++;
+      cmd('getCurrentTime',[]);
+      cmd('getPlayerState',[]);
+      if(tick%4===0) cmd('getDuration',[]);
+      if(tick%6===0) cmd('getVolume',[]);
+    },1000);
+  }
   function stopPoll(){ if(pollT){ clearInterval(pollT); pollT=null; } }
   function buildIframe(id, autoplay){
     const host = hostEl(); if(!host) return;
+    // Create the YouTube document only once for the active YouTube session.
+    // Recreating the iframe for every track makes iOS treat each Next as a
+    // brand-new autoplay session. Keeping one player alive lets loadVideoById
+    // advance tracks without another user gesture.
+    if(iframe && iframe.contentWindow && ready){
+      ROZZADebug.yt('IFRAME REUSE id='+id+' autoplay='+autoplay);
+      cmd(autoplay ? 'loadVideoById' : 'cueVideoById', [id]);
+      if(autoplay){
+        // One follow-up command handles embeds that accept the load but land
+        // in CUED after a track transition.
+        setTimeout(()=>{ if(wantPlay && currentId===id && ready && state!==1) cmd('playVideo',[]); }, 180);
+      }
+      return;
+    }
+    // If the user changes tracks before the very first iframe is ready, replace
+    // that still-booting document. Once ready, all later tracks reuse it.
     host.innerHTML='';
+    iframe=null;
     iframe = document.createElement('iframe');
     iframe.setAttribute('allow','autoplay; encrypted-media; picture-in-picture; fullscreen');
     iframe.setAttribute('allowfullscreen','');
     iframe.setAttribute('referrerpolicy','strict-origin-when-cross-origin');
     iframe.style.cssText='width:100%;height:100%;border:0;display:block;background:#000';
     iframe.addEventListener('load', () => {
-      ROZZADebug.yt('IFRAME LOADED id='+id);
+      ROZZADebug.yt('IFRAME LOADED id='+currentId);
       post({event:'listening', id:'rozza', channel:'widget'});
-      // The iframe is a new document, so resend intent after every navigation.
       setTimeout(()=>syncBackgroundIntent(wantPlay, 'iframe-loaded'), 0);
     });
     iframe.src = 'https://www.youtube-nocookie.com/embed/'+id+'?enablejsapi=1&playsinline=1&rel=0&modestbranding=1&iv_load_policy=3&autoplay='+(autoplay?1:0)+'&origin='+enc(location.origin);
@@ -1554,27 +1613,30 @@ const YT = (() => {
     get lastPlayingAt(){ return lastPlayingAt; }, get startupRecoveryCount(){ return startupRecoveryCount; },
     get videoId(){ return currentId; }, get lastRecoveryReason(){ return lastRecoveryReason; },
     get isSeeking(){ return Date.now() < seekingUntil; }, get backgroundBridgeEnabled(){ return backgroundBridgeEnabled; },
-    setBackgroundBridge, syncBackgroundIntent,
+    setBackgroundBridge, syncBackgroundIntent, pulseBackgroundBridge,
     load(id, autoplay=true){
       attachMsg();
-      currentId=id; wantPlay=autoplay; ready=false; healthy=false; state=-1; time=0; dur=0; loadStartedAt=Date.now();
+      const canReuse=!!(iframe && iframe.contentWindow && ready);
+      currentId=id; wantPlay=autoplay; healthy=false; state=-1; time=0; dur=0; loadStartedAt=Date.now();
+      if(!canReuse) ready=false;
       lastPlayRequestAt=autoplay?loadStartedAt:0; lastExplicitPauseAt=0; lastPlayingAt=0; startupRecoveryCount=0;
       seekingUntil=0; lastRecoveryReason=null;
       clearTimeout(recoveryT);
       ForegroundRecovery.onLoadOrStop();
-      ROZZADebug.yt('LOAD id='+id+' autoplay='+autoplay);
-      buildIframe(id, autoplay);   // created in the caller's stack → in-gesture on a tap
-      syncBackgroundIntent(wantPlay, 'load');
+      ROZZADebug.yt('LOAD id='+id+' autoplay='+autoplay+' reuse='+canReuse);
+      buildIframe(id, autoplay);
+      syncBackgroundIntent(wantPlay, canReuse?'track-switch':'load');
       poll();
       clearTimeout(failT);
-      failT = setTimeout(()=>{ if(!healthy) Coordinator.onYTFailed('silent'); }, 14000);
+      failT = setTimeout(()=>{ if(!healthy) Coordinator.onYTFailed('silent'); }, canReuse?9000:14000);
     },
     play(){
       wantPlay=true; lastPlayRequestAt=Date.now();
       ROZZADebug.yt('CMD PLAY reason=explicit-play wantPlay=true');
       syncBackgroundIntent(true, 'explicit-play');
       if(backgroundBridgeEnabled) setBackgroundBridge(true, true, 'explicit-play');
-      if(ready) cmd('playVideo',[]); else if(currentId) buildIframe(currentId, true);
+      if(ready) cmd('playVideo',[]);
+      else if(currentId && !iframe) buildIframe(currentId, true);
     },
     // `reason` distinguishes a real user/system pause from internal callers —
     // every pause, whoever asks for it, is intentional and final until play()
@@ -1742,8 +1804,9 @@ const Coordinator = {
   // arrives while this is true is ambiguous — possibly about the track being
   // replaced — so it is never treated as an unexpected-foreground pause.
   isSwitchingTrack:false,
-  playIndex(i, autoplay=true){
+  playIndex(i, autoplay=true, reason='user'){
     const it = Q.items[i]; if(!it) return;
+    const autoAdvance = reason==='auto-next' || reason==='smart-queue' || reason==='watchdog';
     if(it.source==='local' && (it.needsReimport || !it.url)){
       Q.idx = i; current = it; updateNowPlaying(); updateMini(); updateQueueUI();
       toast('Re‑import this file to play it', 'warn', 'LOCAL FILE'); switchTab('library'); return;
@@ -1768,18 +1831,25 @@ const Coordinator = {
       activateNativeAudioSession();
       YT.load(it.videoId || it.id, autoplay);
       if(autoplay){
-        // WKWebView is configured for media autoplay. Some YouTube embeds still
-        // arrive CUED/UNSTARTED after an async search, so issue one proactive
-        // explicit play before ever asking the user to touch the player.
-        setTimeout(()=>{
+        // A single persistent YouTube iframe is reused across tracks. These
+        // bounded nudges cover CUED/UNSTARTED transitions without creating a
+        // new autoplay permission boundary for every song.
+        [220,700,1500].forEach(delay=>setTimeout(()=>{
           if(current===it && current.source==='youtube' && YT.wantPlay && !YT.playing && !current.unavailable) YT.play();
-        }, 850);
+        }, delay));
         this._ytT = setTimeout(()=>{
           if(current===it && current.source==='youtube' && !YT.playing && !current.unavailable){
-            setNeedsTap(true);
-            toast('Tap Play once to start this YouTube session.', 'warn', 'YOUTUBE');
+            if(autoAdvance){
+              current.unavailable=true;
+              ROZZADebug.yt('AUTO-NEXT START FAILED id='+(current.videoId||current.id)+' — advancing');
+              toast('Skipping a track that could not start.','info','ROZZA');
+              this.next(true);
+            }else{
+              setNeedsTap(true);
+              toast('Tap Play once to start this YouTube session.', 'warn', 'YOUTUBE');
+            }
           }
-        }, 3000);
+        }, autoAdvance?5200:6500);
       }
     } else {
       setActiveSource('audio', it);
@@ -1787,8 +1857,7 @@ const Coordinator = {
       Audio.load(it.url);
       if(autoplay) Audio.play().catch(()=> toast('Tap play to start playback', 'info', 'AUTOPLAY'));
     }
-    saveQueue(); updateNowPlaying(); updateMini(); updateQueueUI(); mediaSession(); renderProductMemory();
-    setTimeout(()=>SmartQueue.ensure(false),700);
+    saveQueue(); updateNowPlaying(); updateMini(); updateQueueUI(); mediaSession(); scheduleProductMemoryRender();
     repositionYT();
   },
   toggle(){
@@ -1811,11 +1880,11 @@ const Coordinator = {
     if(n<0){
       if(autoFillFromSearch()){ n = Q.items.length-1; }
       else if(settings.smartQueue){
-        SmartQueue.ensure(true).then(added=>{ if(!added){ if(!auto) UI.onPlayState(false); return; } const nn=nextIndex(auto); if(nn>=0) this.playIndex(nn,true); });
+        SmartQueue.ensure(true).then(added=>{ if(!added){ if(!auto) UI.onPlayState(false); return; } const nn=nextIndex(auto); if(nn>=0) this.playIndex(nn,true,auto?'auto-next':'smart-queue'); });
         return;
       } else { if(!auto) UI.onPlayState(false); return; }
     }
-    this.playIndex(n, true);
+    this.playIndex(n, true, auto?'auto-next':'next-button');
   },
   prev(){
     const t = current && current.source==='youtube' ? YT.time : Audio.time;
@@ -1845,7 +1914,10 @@ const Coordinator = {
     if(s===1){
       YT.markPlaying();
       PlaybackState.set({status:'playing'}); UI.onPlayState(true); setNeedsTap(false);
+      SessionState.applyIfPending('youtube');
       clearTimeout(this._ytT); clearTimeout(this._autoT);
+      const stableTrack=current;
+      setTimeout(()=>{ if(current===stableTrack && YT.playing) SmartQueue.ensure(false); },5000);
     }
     else if(s===2){
       // Two independent, narrow recovery categories — never a standing
@@ -1990,13 +2062,17 @@ window.ROZZANativeControls = {
     activateNativeAudioSession();
     YT.syncBackgroundIntent(true, reason);
     YT.setBackgroundBridge(true, true, reason);
+    // Always pulse the iframe-side <video> bridge. The outer YouTube widget
+    // state can remain stale at PLAYING after WebKit has already paused the
+    // underlying media element during Home/lock.
+    YT.pulseBackgroundBridge(reason);
     if(YT.state===1){
-      ROZZADebug.yt('BACKGROUND RESUME ALREADY PLAYING reason='+reason);
-      return { requested:false, alreadyPlaying:true, state:YT.state };
+      ROZZADebug.yt('BACKGROUND OUTER STATE PLAYING — bridge pulse sent reason='+reason);
+      return { requested:true, bridgePulse:true, outerAlreadyPlaying:true, state:YT.state };
     }
     ROZZADebug.yt('BACKGROUND AUTO-RESUME reason='+reason+' state='+YT.state);
     YT.play();
-    return { requested:true, state:YT.state };
+    return { requested:true, bridgePulse:true, state:YT.state };
   },
   foreground(){
     if(current && current.source==='youtube'){
@@ -2215,7 +2291,7 @@ function applyVisualWorld(){const app=$('#app');if(!app)return;app.dataset.world
 const DiscoveryDeck=(()=>{let items=[],idx=0,busy=false;async function open(){openSheet('discovery');await load();}async function load(){if(busy)return;busy=true;renderLoading();try{const q=(Brain.query()||'popular music')+' hidden gems new discovery';const r=await searchRace(q,'songs');items=Brain.rank(r.items).slice(0,12);idx=0;render();}catch(e){items=[];render();}finally{busy=false;}}function currentItem(){return items[idx]||null;}function renderLoading(){const h=$('#discoveryStage');if(h)h.innerHTML='<div class="discovery-empty">ROZZA is finding something that still sounds like you…</div>';}function render(){const hst=$('#discoveryStage');if(!hst)return;const it=currentItem();if(!it){hst.innerHTML='<div class="discovery-empty">That discovery stack is finished.<br><button id="discoveryReload" style="margin-top:14px;padding:10px 14px;border-radius:12px;background:#fff;color:#000">Find more</button></div>';const r=$('#discoveryReload');if(r)r.onclick=load;return;}hst.innerHTML='<div class="discovery-art" style="background-image:url('+h(it.thumbnailURL||FALLBACK_ART)+')"></div><div class="discovery-reason">'+h(Brain.reasonFor(it,null))+'</div><div class="discovery-title" dir="auto">'+h(it.title)+'</div><div class="discovery-artist" dir="auto">'+h(it.artist||'ROZZA discovery')+'</div><div class="discovery-actions"><button id="discLess">Not this</button><button class="heart" id="discPlay">♥ Play</button><button id="discMore">More like</button></div>';$('#discLess').onclick=()=>{Brain.feedback(it,-1);idx++;render();};$('#discMore').onclick=()=>{Brain.feedback(it,1);idx++;render();};$('#discPlay').onclick=()=>{if(!isFavorite(it))toggleFavorite(it);addToQueue(it,true);closeSheet('discovery');};}return{open,load,render};})();
 
 /* ---------------- ROZZA EVENT ---------------- */
-const EventMode=(()=>{let st=Object.assign({active:false,duration:120,energy:72,language:32,era:65,noRepeat:true,artistDiversity:true,smartClean:false,guestLock:false,played:[],backup:[],entrance:null,requests:[]},store.get('eventMode',{}));function save(){store.set('eventMode',st);applyGuestLock();render();}function label(){return (st.language<35?'Egyptian Arabic':st.language>70?'international English':'Arabic international')+' '+(st.energy>70?'high energy party':st.energy<35?'chill':'balanced upbeat')+' '+(st.era>70?'new current hits':st.era<30?'classic throwbacks':'modern classics');}function sync(){const vals=[['duration','eventDuration'],['energy','eventEnergy'],['language','eventLanguage'],['era','eventEra']];vals.forEach(([k,id])=>{const e=$('#'+id);if(e)st[k]=+e.value;});save();}function notePlayed(it){if(!st.active||!it)return;const k=trackKey(it);if(!st.played.includes(k)){st.played.push(k);st.played=st.played.slice(-300);save();}}function shouldAvoid(it){return !!(st.active&&st.noRepeat&&st.played.includes(trackKey(it)));}async function build(){sync();toast('ROZZA is planning the event…','info','ROZZA EVENT');try{const q=label()+(st.smartClean?' clean versions':'')+' popular songs';const r=await searchRace(q,'songs');let list=Brain.rank(r.items).filter(it=>!shouldAvoid(it));if(st.artistDiversity){const seen={};list=list.filter(it=>{const a=(it.artist||'').toLowerCase();if(!a)return true;seen[a]=(seen[a]||0)+1;return seen[a]<=2;});}list=list.slice(0,18);if(!list.length)throw new Error('empty');st.active=true;st.backup=list.slice(-3).map(safeTrackCopy);Q.items=list.map(it=>Object.assign({addedAt:Date.now(),eventAdded:true,smartReason:'ROZZA Event · '+Brain.reasonFor(it,current)},it));Q.idx=-1;current=null;saveQueue();save();updateQueueUI();renderFlowQueuePreview();Coordinator.playIndex(0,true);toast('Event set ready · '+list.length+' tracks','ok','ROZZA EVENT');}catch(e){toast('Could not build the event set yet.','warn','ROZZA EVENT');}}async function emergency(){if(st.backup?.length){const it=st.backup.shift();const existing=Q.items.findIndex(x=>trackKey(x)===trackKey(it));if(existing>=0)Coordinator.playIndex(existing,true);else addToQueue(Object.assign({smartReason:'Emergency backup'},it),true);save();toast('Backup track started','ok','ROZZA EVENT');return;}try{const r=await searchRace((st.language<50?'Arabic Egyptian ':'')+'big party dance hits','songs');if(r.items[0])addToQueue(r.items[0],true);}catch(e){toast('Emergency search failed — current queue kept safe.','warn','ROZZA EVENT');}}function saveEntrance(){if(!current){toast('Play a song first.','info','ENTRANCE');return;}st.entrance={track:safeTrackCopy(current),position:current.source==='youtube'?YT.time:Audio.time};save();toast('Entrance cue saved at '+fmtTime(st.entrance.position),'ok','ENTRANCE');}function playEntrance(){const c=st.entrance;if(!c?.track){toast('No entrance cue saved yet.','info','ENTRANCE');return;}let i=Q.items.findIndex(x=>trackKey(x)===trackKey(c.track));if(i<0){Q.items.push(c.track);i=Q.items.length-1;saveQueue();}Coordinator.playIndex(i,true);[650,1400,2400].forEach(ms=>setTimeout(()=>{if(current&&trackKey(current)===trackKey(c.track))Coordinator.seek(c.position||0);},ms));}function addRequest(q){q=(q||'').trim();if(!q)return;st.requests.push({id:uid(),q,at:Date.now()});st.requests=st.requests.slice(-40);save();}function renderRequests(){const h=$('#guestRequests');if(!h)return;h.innerHTML=(st.requests||[]).slice().reverse().map((x,i)=>'<button data-req="'+i+'">'+hSafe(x.q)+'</button>').join('');const arr=(st.requests||[]).slice().reverse();$$('[data-req]',h).forEach(b=>b.onclick=()=>{closeSheet('event');switchTab('search',{focus:false});playSuggestion(arr[+b.dataset.req].q);});}function hSafe(x){return h(x);}function queueMinutes(){return Math.round(Q.items.slice(Math.max(0,Q.idx),Q.idx+15).reduce((a,x)=>a+(x.duration||210),0)/60);}function render(){const m={eventDuration:st.duration,eventEnergy:st.energy,eventLanguage:st.language,eventEra:st.era};Object.entries(m).forEach(([id,v])=>{const e=$('#'+id);if(e)e.value=v;});const d=$('#eventDurationLabel');if(d)d.textContent=st.duration>=60?(st.duration/60).toFixed(st.duration%60?1:0)+' hours':st.duration+' min';const en=$('#eventEnergyLabel');if(en)en.textContent=st.energy>70?'High':st.energy<35?'Chill':'Balanced';const la=$('#eventLanguageLabel');if(la)la.textContent=st.language<35?'Mostly Arabic':st.language>70?'Mostly Global':'Arabic + Global';const er=$('#eventEraLabel');if(er)er.textContent=st.era>70?'New':st.era<30?'Classics':'Modern mix';$$('[data-eventset]').forEach(b=>b.classList.toggle('on',!!st[b.dataset.eventset]));const qm=$('#eventQueueMinutes');if(qm)qm.textContent=queueMinutes()+'m';const bc=$('#eventBackupCount');if(bc)bc.textContent=(st.backup||[]).length;const net=$('#eventNet');if(net)net.textContent=navigator.onLine?'Online':'Offline';const he=$('#eventHealth');if(he)he.textContent=PlaybackState.get().status==='error'?'Check':'Ready';const cu=$('#entranceCueLabel');if(cu)cu.textContent=st.entrance?(st.entrance.track.title+' · '+fmtTime(st.entrance.position)):'Save the current song and exact moment, then trigger it with one tap.';renderRequests();}function applyGuestLock(){const app=$('#app');if(app)app.classList.toggle('guest-locked',!!st.guestLock);}return{get:()=>st,save,sync,notePlayed,shouldAvoid,build,emergency,saveEntrance,playEntrance,addRequest,render,applyGuestLock};})();
+const EventMode=(()=>{let st=Object.assign({active:false,duration:120,energy:72,language:32,era:65,noRepeat:true,artistDiversity:true,smartClean:false,guestLock:false,played:[],backup:[],entrance:null,requests:[]},store.get('eventMode',{}));function save(){store.set('eventMode',st);applyGuestLock();render();}function label(){return (st.language<35?'Egyptian Arabic':st.language>70?'international English':'Arabic international')+' '+(st.energy>70?'high energy party':st.energy<35?'chill':'balanced upbeat')+' '+(st.era>70?'new current hits':st.era<30?'classic throwbacks':'modern classics');}function sync(){const vals=[['duration','eventDuration'],['energy','eventEnergy'],['language','eventLanguage'],['era','eventEra']];vals.forEach(([k,id])=>{const e=$('#'+id);if(e)st[k]=+e.value;});save();}function notePlayed(it){if(!st.active||!it)return;const k=trackKey(it);if(!st.played.includes(k)){st.played.push(k);st.played=st.played.slice(-300);save();}}function shouldAvoid(it){return !!(st.active&&st.noRepeat&&st.played.includes(trackKey(it)));}async function build(){sync();toast('ROZZA is planning the event…','info','ROZZA EVENT');try{const q=label()+(st.smartClean?' clean versions':'')+' popular songs';const r=await searchRace(q,'songs');let list=Brain.rank(r.items).filter(it=>!shouldAvoid(it));if(st.artistDiversity){const seen={};list=list.filter(it=>{const a=(it.artist||'').toLowerCase();if(!a)return true;seen[a]=(seen[a]||0)+1;return seen[a]<=2;});}list=list.slice(0,18);if(!list.length)throw new Error('empty');st.active=true;st.backup=list.slice(-3).map(safeTrackCopy);Q.items=list.map(it=>Object.assign({addedAt:Date.now(),eventAdded:true,smartReason:'ROZZA Event · '+Brain.reasonFor(it,current)},it));Q.idx=-1;current=null;if(Q.shuffle) buildShuffle();saveQueue();save();updateQueueUI();renderFlowQueuePreview();Coordinator.playIndex(0,true);toast('Event set ready · '+list.length+' tracks','ok','ROZZA EVENT');}catch(e){toast('Could not build the event set yet.','warn','ROZZA EVENT');}}async function emergency(){if(st.backup?.length){const it=st.backup.shift();const existing=Q.items.findIndex(x=>trackKey(x)===trackKey(it));if(existing>=0)Coordinator.playIndex(existing,true);else addToQueue(Object.assign({smartReason:'Emergency backup'},it),true);save();toast('Backup track started','ok','ROZZA EVENT');return;}try{const r=await searchRace((st.language<50?'Arabic Egyptian ':'')+'big party dance hits','songs');if(r.items[0])addToQueue(r.items[0],true);}catch(e){toast('Emergency search failed — current queue kept safe.','warn','ROZZA EVENT');}}function saveEntrance(){if(!current){toast('Play a song first.','info','ENTRANCE');return;}st.entrance={track:safeTrackCopy(current),position:current.source==='youtube'?YT.time:Audio.time};save();toast('Entrance cue saved at '+fmtTime(st.entrance.position),'ok','ENTRANCE');}function playEntrance(){const c=st.entrance;if(!c?.track){toast('No entrance cue saved yet.','info','ENTRANCE');return;}let i=Q.items.findIndex(x=>trackKey(x)===trackKey(c.track));if(i<0){Q.items.push(c.track);i=Q.items.length-1;saveQueue();}Coordinator.playIndex(i,true);[650,1400,2400].forEach(ms=>setTimeout(()=>{if(current&&trackKey(current)===trackKey(c.track))Coordinator.seek(c.position||0);},ms));}function addRequest(q){q=(q||'').trim();if(!q)return;st.requests.push({id:uid(),q,at:Date.now()});st.requests=st.requests.slice(-40);save();}function renderRequests(){const h=$('#guestRequests');if(!h)return;h.innerHTML=(st.requests||[]).slice().reverse().map((x,i)=>'<button data-req="'+i+'">'+hSafe(x.q)+'</button>').join('');const arr=(st.requests||[]).slice().reverse();$$('[data-req]',h).forEach(b=>b.onclick=()=>{closeSheet('event');switchTab('search',{focus:false});playSuggestion(arr[+b.dataset.req].q);});}function hSafe(x){return h(x);}function queueMinutes(){return Math.round(Q.items.slice(Math.max(0,Q.idx),Q.idx+15).reduce((a,x)=>a+(x.duration||210),0)/60);}function render(){const m={eventDuration:st.duration,eventEnergy:st.energy,eventLanguage:st.language,eventEra:st.era};Object.entries(m).forEach(([id,v])=>{const e=$('#'+id);if(e)e.value=v;});const d=$('#eventDurationLabel');if(d)d.textContent=st.duration>=60?(st.duration/60).toFixed(st.duration%60?1:0)+' hours':st.duration+' min';const en=$('#eventEnergyLabel');if(en)en.textContent=st.energy>70?'High':st.energy<35?'Chill':'Balanced';const la=$('#eventLanguageLabel');if(la)la.textContent=st.language<35?'Mostly Arabic':st.language>70?'Mostly Global':'Arabic + Global';const er=$('#eventEraLabel');if(er)er.textContent=st.era>70?'New':st.era<30?'Classics':'Modern mix';$$('[data-eventset]').forEach(b=>b.classList.toggle('on',!!st[b.dataset.eventset]));const qm=$('#eventQueueMinutes');if(qm)qm.textContent=queueMinutes()+'m';const bc=$('#eventBackupCount');if(bc)bc.textContent=(st.backup||[]).length;const net=$('#eventNet');if(net)net.textContent=navigator.onLine?'Online':'Offline';const he=$('#eventHealth');if(he)he.textContent=PlaybackState.get().status==='error'?'Check':'Ready';const cu=$('#entranceCueLabel');if(cu)cu.textContent=st.entrance?(st.entrance.track.title+' · '+fmtTime(st.entrance.position)):'Save the current song and exact moment, then trigger it with one tap.';renderRequests();}function applyGuestLock(){const app=$('#app');if(app)app.classList.toggle('guest-locked',!!st.guestLock);}return{get:()=>st,save,sync,notePlayed,shouldAvoid,build,emergency,saveEntrance,playEntrance,addRequest,render,applyGuestLock};})();
 
 
 /* ---------------- FAST NATURAL-LANGUAGE COMMANDS ---------------- */
@@ -2300,7 +2376,7 @@ const Flow=(()=>{
     toast('Building your Flow…','info','ROZZA FLOW'); SmartQueue.setWorking(true,'Building your first set…');
     try{
       const res=await searchRace(q,'songs'); const items=res.items.slice(0,8); if(!items.length) throw new Error('empty');
-      const startIndex=Q.items.length; const existing=new Set(Q.items.map(trackKey)); items.forEach(it=>{if(!existing.has(trackKey(it))){Q.items.push(Object.assign({addedAt:Date.now(),flowAdded:true,smartReason:'Flow · '+Brain.reasonFor(it,current)},it));existing.add(trackKey(it));}}); saveQueue(); updateQueueUI();
+      const startIndex=Q.items.length; const existing=new Set(Q.items.map(trackKey)); items.forEach(it=>{if(!existing.has(trackKey(it))){Q.items.push(Object.assign({addedAt:Date.now(),flowAdded:true,smartReason:'Flow · '+Brain.reasonFor(it,current)},it));existing.add(trackKey(it));}}); if(Q.shuffle) buildShuffle(); saveQueue(); updateQueueUI();
       const first=Q.items.findIndex((it,i)=>i>=startIndex&&it.flowAdded); if(first>=0) Coordinator.playIndex(first,true); else if(Q.items.length) Coordinator.playIndex(Math.max(0,Q.idx),true);
       toast('Flow is live','ok','ROZZA FLOW');
     }catch(e){
@@ -2340,7 +2416,7 @@ const SmartQueue=(()=>{
       const res=await searchRace(q,'songs'); const existing=new Set(Q.items.map(trackKey)); let added=0;
       const candidates=Brain.rank(res.items,Radio.isActive()?Radio.get().seed:current);
       for(const it of candidates){if(!existing.has(trackKey(it)) && !(typeof EventMode!=='undefined'&&EventMode.shouldAvoid(it))){Q.items.push(Object.assign({addedAt:Date.now(),smartAdded:true,smartReason:Radio.isActive()?'Radio · '+Brain.reasonFor(it,Radio.get().seed):Brain.reasonFor(it,current)},it));existing.add(trackKey(it));added++;if(added>=5)break;}}
-      if(added){saveQueue();updateQueueUI();renderFlowQueuePreview();ROZZADebug.player('SMART QUEUE added='+added);return true;} return false;
+      if(added){if(Q.shuffle) buildShuffle();saveQueue();updateQueueUI();renderFlowQueuePreview();ROZZADebug.player('SMART QUEUE added='+added);return true;} return false;
     }catch(e){return false;}finally{busy=false;setWorking(false);}
   }
   return {ensure,setWorking,get busy(){return busy;}};
@@ -2365,7 +2441,21 @@ const PlaybackWatchdog=(()=>{
   return {note,start};
 })();
 
-function renderProductMemory(){renderFavorites();renderPlayedTracks();renderHomeRecently();renderContinueListening();renderListeningStats();renderSavedSets();renderBrainCard();renderRadioState();Flow.render();renderFlowQueuePreview();renderTasteDNA();renderMusicMemory();QueueDoctor.render();SleepTimer.render();EventMode.render();applyVisualWorld();}
+let _productRenderHandle=null;
+function renderProductMemory(){
+  renderFavorites();renderPlayedTracks();renderHomeRecently();renderContinueListening();renderListeningStats();
+  renderSavedSets();renderBrainCard();renderRadioState();Flow.render();renderFlowQueuePreview();
+  renderTasteDNA();renderMusicMemory();QueueDoctor.render();SleepTimer.render();EventMode.render();applyVisualWorld();
+}
+function scheduleProductMemoryRender(){
+  if(_productRenderHandle) return;
+  const run=()=>{ _productRenderHandle=null; renderProductMemory(); };
+  if('requestIdleCallback' in window){
+    _productRenderHandle=requestIdleCallback(run,{timeout:700});
+  }else{
+    _productRenderHandle=setTimeout(run,120);
+  }
+}
 
 let library = store.get('library', []);
 const blobMap = new Map();
@@ -2436,6 +2526,8 @@ async function loadLink(raw){
 }
 
 /* ---------------- UI ---------------- */
+let _lastNativePositionPush=0;
+let _lastMediaPositionPush=0;
 const UI = {
   _playing:false,
   onPlayState(playing){
@@ -2465,8 +2557,15 @@ const UI = {
     const fill=$('#npFill'), knob=$('#npKnob'), ct=$('#npCur'), dt=$('#npDur');
     if(fill){ const pct=d>0?clamp(t/d*100,0,100):0; fill.style.width=pct+'%'; if(knob) knob.style.left=pct+'%'; }
     if(ct) ct.textContent=fmtTime(t); if(dt) dt.textContent=fmtTime(d);
-    if('mediaSession' in navigator && d>0){ try{ navigator.mediaSession.setPositionState({ duration:d, playbackRate:1, position:clamp(t,0,d) }); }catch(e){} }
-    postNowPlayingToNative();
+    const now=performance.now();
+    if('mediaSession' in navigator && d>0 && now-_lastMediaPositionPush>1000){
+      _lastMediaPositionPush=now;
+      try{ navigator.mediaSession.setPositionState({ duration:d, playbackRate:1, position:clamp(t,0,d) }); }catch(e){}
+    }
+    if(now-_lastNativePositionPush>2500){
+      _lastNativePositionPush=now;
+      postNowPlayingToNative();
+    }
     ListeningStats?.note?.(current,t); PlaybackWatchdog.note(t); SessionState.save(false);
   }
 };
@@ -2766,9 +2865,9 @@ let pendingReimport=null;
 
 /* ---------------- VISUALIZER / DUST / TICKER ---------------- */
 const Viz=(()=>{
-  const np=()=>$('#npSpec'), dk=()=>$('#deckSpec'); const BARS=40; const sim=new Float32Array(BARS); let t=0;
+  const np=()=>$('#npSpec'), dk=()=>$('#deckSpec'); const BARS=28; const sim=new Float32Array(BARS); let t=0;
   function draw(canvas,bars){ if(!canvas) return; const ctx=canvas.getContext('2d'); const W=canvas.width,H=canvas.height; ctx.clearRect(0,0,W,H); const n=bars.length,gap=2,bw=(W-gap*(n-1))/n; for(let i=0;i<n;i++){ const v=clamp(bars[i],0,1); const bh=Math.max(2,v*(H-2)); const x=i*(bw+gap); const g=ctx.createLinearGradient(0,H,0,0); g.addColorStop(0,'#ff2e63'); g.addColorStop(0.6,'#ff5c8a'); g.addColorStop(1,'#ffb347'); ctx.fillStyle=g; ctx.globalAlpha=0.55+v*0.45; ctx.fillRect(x,H-bh,bw,bh); } ctx.globalAlpha=1; }
-  let lastFrame=0; function frame(ts=0){ if(document.hidden){ setTimeout(()=>requestAnimationFrame(frame),500); return; } if(ts-lastFrame<33){ requestAnimationFrame(frame); return; } lastFrame=ts; t+=0.05; const playing=UI._playing; const amp=(playing&&settings.simViz)?1:0.12; for(let i=0;i<BARS;i++){ const base=(Math.sin(t*1.7+i*0.5)*0.5+0.5)*(Math.sin(t*0.7+i*0.21)*0.4+0.6); const noise=Math.random()*0.25; const target=(base*0.7+noise)*amp; sim[i]+=(target-sim[i])*0.25; } draw(np(),sim.slice(0,BARS)); const mini=[]; for(let i=0;i<24;i++) mini.push(sim[Math.floor(i*BARS/24)]); draw(dk(),mini); requestAnimationFrame(frame); }
+  let lastFrame=0; function frame(ts=0){ if(document.hidden){ setTimeout(()=>requestAnimationFrame(frame),500); return; } if(ts-lastFrame<50){ requestAnimationFrame(frame); return; } lastFrame=ts; t+=0.05; const playing=UI._playing; const amp=(playing&&settings.simViz)?1:0.12; for(let i=0;i<BARS;i++){ const base=(Math.sin(t*1.7+i*0.5)*0.5+0.5)*(Math.sin(t*0.7+i*0.21)*0.4+0.6); const noise=Math.random()*0.25; const target=(base*0.7+noise)*amp; sim[i]+=(target-sim[i])*0.25; } draw(np(),sim.slice(0,BARS)); const mini=[]; for(let i=0;i<24;i++) mini.push(sim[Math.floor(i*BARS/24)]); draw(dk(),mini); requestAnimationFrame(frame); }
   return { start(){ requestAnimationFrame(frame); } };
 })();
 const Dust=(()=>{
@@ -2976,15 +3075,23 @@ function initDevPanel(){
 }
 
 async function boot(){
+  if(store.get('networkEpoch',0)!==23){ store.del('mirrors'); store.set('networkEpoch',23); }
   loadPool(); loadQueue(); wire(); Dust.start(); Viz.start(); const nb=$('#networkBanner'); if(nb&&!navigator.onLine) nb.classList.add('show');
   if(DEBUG) initDevPanel();
   tickClock(); setInterval(tickClock,15000);
   updateGreeting(); setInterval(updateGreeting,15*60*1000);
   updateQueueUI(); updateMini(); updateNowPlaying();
-  renderRecents(); renderLibHistory(); renderLibrary(); renderHomeRecents(); renderProductMemory(); buildTicker(); updateLiveAtmosphere(current);
+  renderRecents(); renderLibHistory(); renderLibrary(); renderHomeRecents();
+  renderContinueListening(); renderBrainCard(); Flow.render(); scheduleProductMemoryRender();
+  buildTicker(); updateLiveAtmosphere(current);
   UI.onPlayState(false); PlaybackWatchdog.start();
   Audio.vol(settings.volume); YT.setVol(settings.volume);
-  refreshRegistries().then(()=>warmup()).then(()=>{buildTicker();setTimeout(()=>BrainRecommendations.refresh(false),700);});
+  // Don't flood startup with registry + health + recommendation requests.
+  // Search is usable immediately from the bundled seed list; network discovery
+  // warms quietly after first paint.
+  setTimeout(()=>warmup(2).catch(()=>{}),1200);
+  setTimeout(()=>refreshRegistries().then(updateConnFromState).catch(()=>{}),9000);
+  setTimeout(()=>BrainRecommendations.refresh(false),12000);
   setInterval(()=>{ refreshRegistries().then(updateConnFromState).catch(()=>{}); }, 10*60*1000);
   setInterval(buildTicker,30000);
 }

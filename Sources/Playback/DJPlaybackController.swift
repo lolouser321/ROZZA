@@ -45,8 +45,15 @@ final class DJPlaybackController: NSObject, ObservableObject {
         observeAudioEvents()
         configureRemoteCommands()
         applyCrossfader()
-        statusTimer = Timer.scheduledTimer(withTimeInterval: 0.6, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.refreshDebugState() }
+        // Debug-deck polling used to cross the WKWebView bridge every 0.6 s
+        // even when the DJ diagnostics UI was closed. Core playback state now
+        // arrives through the main Now Playing handoff, so keep this expensive
+        // status poll strictly for the debug deck.
+        statusTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                guard let self, self.isPresented else { return }
+                self.refreshDebugState()
+            }
         }
     }
 
@@ -101,6 +108,15 @@ final class DJPlaybackController: NSObject, ObservableObject {
                 youtubeWantsPlayback = false
                 isYouTubePlaying = false
                 updateNativePlaybackState(isPlaying: false, payload: payload)
+            }
+        case "BackgroundPulse":
+            // A native transition kick asks the iframe bridge to inspect the
+            // real <video>, not just the outer YouTube widget state.
+            if (payload["paused"] as? Bool) == false {
+                _ = configureAudioSession()
+                youtubeWantsPlayback = true
+                isYouTubePlaying = true
+                updateNativePlaybackState(isPlaying: true, payload: payload)
             }
         case "YouTubeFullscreen":
             if let state = payload["state"] as? String {
@@ -298,7 +314,7 @@ final class DJPlaybackController: NSObject, ObservableObject {
     /// The JS side re-checks current source + user intent on every attempt, so
     /// a real user Pause always wins and a stale native callback cannot restart it.
     private func scheduleBackgroundYouTubeResumeKicks(generation: Int) {
-        let delays: [Double] = [0.10, 0.42, 0.90]
+        let delays: [Double] = [0.05, 0.18, 0.45, 0.90, 1.50, 2.40, 3.60]
         for (index, delay) in delays.enumerated() {
             DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
                 guard let self,
@@ -316,7 +332,7 @@ final class DJPlaybackController: NSObject, ObservableObject {
                 }
             }
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + 4.8) { [weak self] in
             guard let self, generation == self.backgroundResumeGeneration else { return }
             self.endBackgroundTransitionTask()
         }

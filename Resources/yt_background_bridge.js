@@ -7,16 +7,17 @@
   let enabled = false;
   let shouldPlay = false;
   let currentVideo = null;
+  let intendedVideoId = null;
   let observer = null;
   let recoveryTimes = [];
-  const RECOVERY_WINDOW_MS = 30000;
-  const MAX_RECOVERIES = 3;
+  const RECOVERY_WINDOW_MS = 12000;
+  const MAX_RECOVERIES = 8;
 
   function emit(event, extra) {
     try {
       window.webkit?.messageHandlers?.callbackHandler?.postMessage({
         event,
-        videoId: getVideoId(),
+        videoId: intendedVideoId || getVideoId(),
         ...(extra || {})
       });
     } catch (_) {}
@@ -150,7 +151,9 @@
       ended: !!video?.ended
     });
     if (enabled && shouldPlay && video && !video.ended) {
-      setTimeout(() => recover(video, 'pause-event'), 120);
+      // A Home/lock transition can produce more than one native pause pulse.
+      // These are bounded transition retries, not a permanent background loop.
+      [70, 260, 700].forEach(delay => setTimeout(() => recover(video, 'pause-event-' + delay), delay));
     }
   }
 
@@ -192,8 +195,10 @@
   }
 
   function setMode(nextEnabled, nextShouldPlay, reason) {
+    const wasEnabled = enabled;
     enabled = !!nextEnabled;
     shouldPlay = !!nextShouldPlay;
+    if (enabled && !wasEnabled) recoveryTimes = [];
     if (!enabled) {
       stopObserver();
       recoveryTimes = [];
@@ -223,9 +228,23 @@
     let data = event.data;
     try { if (typeof data === 'string') data = JSON.parse(data); } catch (_) { return; }
     if (!data) return;
+    if (data.videoId) intendedVideoId = String(data.videoId);
     if (data.event === 'ROZZA_BACKGROUND_INTENT') {
       shouldPlay = !!data.shouldPlay;
       emit('BackgroundIntent', { shouldPlay, reason: data.reason || 'intent-sync' });
+      return;
+    }
+    if (data.event === 'ROZZA_BACKGROUND_PULSE') {
+      shouldPlay = !!data.shouldPlay;
+      if (!enabled || !shouldPlay) return;
+      startObserver();
+      const video = scanVideo();
+      emit('BackgroundPulse', {
+        reason: data.reason || 'native-pulse',
+        paused: video ? !!video.paused : null,
+        currentTime: video?.currentTime || 0
+      });
+      if (video && video.paused && !video.ended) recover(video, 'native-pulse');
       return;
     }
     if (data.event !== 'ROZZA_BACKGROUND_MODE') return;

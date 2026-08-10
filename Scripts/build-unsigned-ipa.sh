@@ -40,22 +40,26 @@ test -s "$APP_PATH/yt_background_bridge.js"
 test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleDisplayName' "$APP_PATH/Info.plist")" = "ROZZA"
 test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIconName' "$APP_PATH/Info.plist")" = "AppIcon"
 test "$(/usr/libexec/PlistBuddy -c 'Print :UIBackgroundModes:0' "$APP_PATH/Info.plist")" = "audio"
-test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP_PATH/Info.plist")" = "4.0.3"
-test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP_PATH/Info.plist")" = "23"
+test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP_PATH/Info.plist")" = "4.0.5"
+test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP_PATH/Info.plist")" = "25"
 
-# Build 23 regression guard: make sure Xcode packaged the new foreground ->
+# Build 25 regression guard: make sure Xcode packaged the new foreground ->
 # native playback-intent handoff instead of a stale HTML or Swift build.
 cmp -s "$PROJECT_ROOT/rozza2.html" "$APP_PATH/rozza2.html"
 cmp -s "$PROJECT_ROOT/Resources/yt_background_bridge.js" "$APP_PATH/yt_background_bridge.js"
 grep -q "wantsPlayback: st.source==='youtube' ? !!YT.wantPlay : isPlaying" "$APP_PATH/rozza2.html"
-grep -q "const MIRROR_POOL_VERSION = 3;" "$APP_PATH/rozza2.html"
-grep -q "pipedapi.syncpundit.io" "$APP_PATH/rozza2.html"
-grep -q "/healthcheck" "$APP_PATH/rozza2.html"
+grep -q "window.ROZZANativeNetwork=ROZZANativeNetwork" "$APP_PATH/rozza2.html"
+grep -q "cmd(autoplay ? 'loadVideoById' : 'cueVideoById', \[id\])" "$APP_PATH/rozza2.html"
+grep -q "ROZZA_BACKGROUND_PULSE" "$APP_PATH/rozza2.html"
+grep -q "ROZZA_BACKGROUND_PULSE" "$APP_PATH/yt_background_bridge.js"
+grep -q "const MIRROR_POOL_VERSION = 4;" "$APP_PATH/rozza2.html"
+grep -q "pipedapi.orangenet.cc" "$APP_PATH/rozza2.html"
 # `strings | grep -q` is unsafe under pipefail: grep -q exits as soon as it
 # finds a match, which can SIGPIPE `strings` mid-write ("failed to flush
 # output") and abort the whole script even though the match was found.
-# Capture to a file first so grep's exit status is the only one that matters.
+# Capture to a file once so grep's exit status is the only one that matters.
 strings "$APP_PATH/ROZZA" > "$WORK_DIR/rozza-binary-strings.txt" || true
+grep -q "networkProxy" "$WORK_DIR/rozza-binary-strings.txt"
 grep -q "Background capture wantsPlayback=" "$WORK_DIR/rozza-binary-strings.txt"
 
 ditto "$APP_PATH" "$WORK_DIR/Payload/ROZZA.app"

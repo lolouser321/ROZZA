@@ -20,6 +20,7 @@ struct ROZZAWebAppView: UIViewRepresentable {
         configuration.userContentController.add(context.coordinator, name: "audioSession")
         configuration.userContentController.add(context.coordinator, name: "nowPlaying")
         configuration.userContentController.add(context.coordinator, name: "haptics")
+        configuration.userContentController.add(context.coordinator, name: "networkProxy")
         // Install only the new background-only bridge. It is injected into
         // YouTube frames at document start but remains inert until the main
         // ROZZA state machine explicitly arms it during app backgrounding.
@@ -82,6 +83,9 @@ struct ROZZAWebAppView: UIViewRepresentable {
                 dj?.updateNowPlaying(info: dict)
             } else if message.name == "haptics" {
                 fireHaptic(message.body as? String ?? "light")
+            } else if message.name == "networkProxy", message.frameInfo.isMainFrame,
+                      let payload = message.body as? [String: Any] {
+                proxyJSONRequest(payload)
             } else if message.name == YouTubeMessengerBridge.handlerName,
                       let payload = message.body as? [String: Any] {
                 dj?.handleYouTubeMessengerEvent(payload)
@@ -105,6 +109,49 @@ struct ROZZAWebAppView: UIViewRepresentable {
                 let nsError = error as NSError
                 print("[ROZZA WebView] audioSession activation failed domain=\(nsError.domain) OSStatus=\(nsError.code) error=\(nsError)")
             }
+        }
+
+        /// Native metadata/search transport for ROZZA's public discovery APIs.
+        /// WKWebView fetches can be rejected by CORS even when the same HTTPS
+        /// endpoint is healthy. URLSession is not subject to browser CORS, so
+        /// the web layer can use this as a bounded fallback instead of depending
+        /// on public CORS proxy sites.
+        private func proxyJSONRequest(_ payload: [String: Any]) {
+            guard let requestID = payload["id"] as? String,
+                  let rawURL = payload["url"] as? String,
+                  let url = URL(string: rawURL),
+                  url.scheme?.lowercased() == "https" else {
+                return
+            }
+
+            let requestedTimeout = (payload["timeoutMs"] as? Double ?? 8000) / 1000.0
+            let timeout = min(max(requestedTimeout, 2.0), 12.0)
+            var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: timeout)
+            request.setValue("application/json, text/plain, */*", forHTTPHeaderField: "Accept")
+            request.setValue("ROZZA/4.0.5 iOS", forHTTPHeaderField: "User-Agent")
+
+            URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
+                let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+                let text = data.flatMap { String(data: $0, encoding: .utf8) } ?? ""
+                let ok = error == nil && (200...299).contains(status) && !text.isEmpty
+                let result: [String: Any] = [
+                    "ok": ok,
+                    "status": status,
+                    "text": text,
+                    "error": error?.localizedDescription ?? ""
+                ]
+                guard JSONSerialization.isValidJSONObject(result),
+                      let resultData = try? JSONSerialization.data(withJSONObject: result),
+                      let resultJSON = String(data: resultData, encoding: .utf8),
+                      let idData = try? JSONSerialization.data(withJSONObject: requestID, options: .fragmentsAllowed),
+                      let idJSON = String(data: idData, encoding: .utf8) else { return }
+                DispatchQueue.main.async {
+                    self?.dj?.persistentWebView?.evaluateJavaScript(
+                        "window.ROZZANativeNetwork && window.ROZZANativeNetwork._resolve(\(idJSON), \(resultJSON));",
+                        completionHandler: nil
+                    )
+                }
+            }.resume()
         }
 
         func loadApp(in webView: WKWebView) {
