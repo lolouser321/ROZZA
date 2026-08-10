@@ -66,12 +66,12 @@ check "yt_background_bridge.js present" test -s "$APP_PATH/yt_background_bridge.
 check "CFBundleDisplayName" test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleDisplayName' "$APP_PATH/Info.plist")" = "ROZZA"
 check "CFBundleIconName" test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIconName' "$APP_PATH/Info.plist")" = "AppIcon"
 check "UIBackgroundModes[0]" test "$(/usr/libexec/PlistBuddy -c 'Print :UIBackgroundModes:0' "$APP_PATH/Info.plist")" = "audio"
-check "CFBundleShortVersionString == 4.1.0" test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP_PATH/Info.plist")" = "4.1.0"
-check "CFBundleVersion == 26" test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP_PATH/Info.plist")" = "26"
+check "CFBundleShortVersionString == 4.1.1" test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP_PATH/Info.plist")" = "4.1.1"
+check "CFBundleVersion == 27" test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP_PATH/Info.plist")" = "27"
 
-# Build 26 regression guard: make sure Xcode packaged the new foreground ->
-# native playback-intent handoff and Drive Mode remote-command work instead
-# of a stale HTML or Swift build.
+# Build 27 regression guard: make sure Xcode packaged the new foreground ->
+# native playback-intent handoff, Drive Mode, and artwork-signature work
+# instead of a stale HTML or Swift build.
 check_cmp "packaged rozza2.html matches source" "$PROJECT_ROOT/rozza2.html" "$APP_PATH/rozza2.html"
 check_cmp "packaged yt_background_bridge.js matches source" "$PROJECT_ROOT/Resources/yt_background_bridge.js" "$APP_PATH/yt_background_bridge.js"
 check "background handoff wantsPlayback line" grep -q "wantsPlayback: st.source==='youtube' ? !!YT.wantPlay : isPlaying" "$APP_PATH/rozza2.html"
@@ -87,6 +87,14 @@ check "vehicle command diagnostics" grep -q "window.ROZZARemoteDiagnostics=Remot
 check "native Now Playing clear handoff" grep -q "postMessage({ clear:true" "$APP_PATH/rozza2.html"
 check "native queue-index metadata" grep -q "queueIndex: Math.max(0,Q.idx)" "$APP_PATH/rozza2.html"
 check "Drive Mode sheet present" grep -q 'id="driveSheet"' "$APP_PATH/rozza2.html"
+check "artwork cover element present" grep -q 'id="ytArtworkCover"' "$APP_PATH/rozza2.html"
+check "ROZZA signature present" grep -q 'rozza-signature' "$APP_PATH/rozza2.html"
+if grep -q "This video can’t be embedded right now." "$APP_PATH/rozza2.html"; then
+  echo "  [FAIL] legacy embed-error copy removed"
+  exit 1
+else
+  echo "  [OK]   legacy embed-error copy removed"
+fi
 check "continuous playback default" grep -q "continuousPlayback:true" "$APP_PATH/rozza2.html"
 # `strings | grep -q` is unsafe under pipefail: grep -q exits as soon as it
 # finds a match, which can SIGPIPE `strings` mid-write ("failed to flush
@@ -97,10 +105,10 @@ check "continuous playback default" grep -q "continuousPlayback:true" "$APP_PATH
 # enough (34 bytes) to be reliable: Swift's small-string optimization can
 # encode literals under ~15 bytes as a packed inline value with no
 # byte-contiguous representation at all, so `strings` legitimately cannot
-# find short literals like "networkProxy" (12 bytes) or "remote-native-"
-# (14 bytes) even when the code is compiled in and working correctly (this
-# is exactly what broke the previous build). Everything those would have
-# checked is already covered reliably by qa-source.py's source-level greps.
+# find short literals like "networkProxy" (12 bytes), "ROZZA.RemoteCommand"
+# alone, or "remote-native-" (14 bytes) even when the code is compiled in and
+# working correctly. Everything those would have checked is already covered
+# reliably by qa-source.py's source-level greps.
 strings "$APP_PATH/ROZZA" > "$WORK_DIR/rozza-binary-strings.txt" || true
 check "compiled binary contains background-capture log line" grep -q "Background capture wantsPlayback=" "$WORK_DIR/rozza-binary-strings.txt"
 

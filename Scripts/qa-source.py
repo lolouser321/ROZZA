@@ -19,7 +19,12 @@ if dups: errors.append('duplicate HTML ids: '+', '.join(dups))
 for rid in ['app','tabbar','searchInput','results','minibar','npSheet','queueSheet','eventSheet','driveSheet','drivePrev','drivePlay','driveNext','flowEnergy','likedTracks','vehicleControlStatus','copyVehicleDiagnosticsBtn']:
     if rid not in seen: errors.append('missing required HTML id: '+rid)
 if 'const DEBUG = false;' not in html: errors.append('production HTML DEBUG must be false')
-if 'ROZZA 4.1.0 · DRIVE REMOTE' not in html: errors.append('wrong visible version label')
+if 'ROZZA 4.1.1 · ARTWORK SIGNATURE' not in html: errors.append('wrong visible version label')
+if 'id="ytArtworkCover"' not in html: errors.append('Now Playing artwork cover missing')
+if 'rozza-signature' not in html or '<b>ROZZA</b>' not in html: errors.append('ROZZA artwork signature missing')
+if 'This video can’t be embedded right now.' in html: errors.append('legacy YouTube embed-error copy still visible in Now Playing')
+if 'showYTArtworkCover(r)' not in html or 'hideYTArtworkCover()' not in html: errors.append('artwork cover lifecycle missing')
+if 'syncYTThroughSheetMotion' not in html: errors.append('artwork cover does not track the Now Playing sheet transition')
 if 'state.active=false;' not in html: errors.append('Flow failure rollback missing')
 if "const existing=Q.items.findIndex(x=>trackKey(x)===trackKey(it))" not in html: errors.append('event backup de-duplication missing')
 
@@ -56,7 +61,7 @@ if 'MPNowPlayingInfoPropertyPlaybackQueueIndex' not in dj or 'MPNowPlayingInfoPr
 if 'updateNowPlayingArtwork' not in dj: errors.append('native artwork publishing missing')
 if 'lastNowPlayingTrackID' not in dj or 'nowPlayingInfo = nil' not in dj: errors.append('stale Now Playing cleanup missing')
 proj=(root/'project.yml').read_text()
-for token in ['MARKETING_VERSION: 4.1.0','CURRENT_PROJECT_VERSION: 26','Resources/yt_background_bridge.js','path: rozza2.html']:
+for token in ['MARKETING_VERSION: 4.1.1','CURRENT_PROJECT_VERSION: 27','Resources/yt_background_bridge.js','path: rozza2.html']:
     if token not in proj: errors.append('project.yml missing: '+token)
 workflow=(root/'.github/workflows/ios-ipa.yml').read_text()
 if 'working-directory: ios' in workflow or 'path: ios/ROZZA-unsigned.ipa' in workflow: errors.append('GitHub workflow still builds obsolete ios subproject')
@@ -68,4 +73,4 @@ if errors:
     print('ROZZA PERFORMANCE-AUTOPLAY source QA FAILED:')
     for e in errors: print(' -',e)
     sys.exit(1)
-print(f'ROZZA DRIVE-REMOTE source QA PASS — {len(p.ids)} ids, no duplicates, remote transport + Drive Mode guards present.')
+print(f'ROZZA ARTWORK-SIGNATURE source QA PASS — {len(p.ids)} ids, no duplicates, artwork cover + signature + remote guards present.')

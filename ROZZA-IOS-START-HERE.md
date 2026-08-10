@@ -2,7 +2,7 @@
 
 **Canonical iOS project: repository root.**
 
-Do not build an `ios/` subfolder. ROZZA 4.1.0 Build 26 intentionally removed the old duplicate iOS project so there is only one playback stack and one source of truth.
+Do not build an `ios/` subfolder. ROZZA 4.1.1 Build 27 intentionally removed the old duplicate iOS project so there is only one playback stack and one source of truth.
 
 ## Build on macOS
 

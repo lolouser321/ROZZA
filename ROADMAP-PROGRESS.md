@@ -1,6 +1,6 @@
 # ROZZA ROADMAP PROGRESS
 
-## 4.1.0 DRIVE REMOTE · Build 26
+## 4.1.1 ARTWORK SIGNATURE · Build 27
 - Native vehicle/Bluetooth/Lock Screen remote command pipeline
 - Idempotent Next/Previous retries with JS acknowledgement
 - Background execution window + post-command background pulses
