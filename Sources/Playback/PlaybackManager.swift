@@ -24,7 +24,7 @@ final class PlaybackManager: ObservableObject {
     private var sleepTimer: Timer?
     private var index = 0
 
-    init() { configureRemoteCommands(); restore() }
+    init() { restore() }
 
     func play(_ track: Track, in tracks: [Track]? = nil) async {
         if let tracks { queue = tracks; index = tracks.firstIndex(of: track) ?? 0 }

@@ -112,17 +112,13 @@ final class DJPlaybackController: NSObject, ObservableObject {
                 updateNativePlaybackState(isPlaying: effectivePlaying, payload: payload)
             }
         case "BackgroundIntent":
-            // Intent messages may also be emitted by automatic lifecycle sync.
-            // A hard system/user Pause is authoritative until a real explicit
-            // Play/Next/Previous command or main-player handoff clears it.
-            let shouldPlay = payload["shouldPlay"] as? Bool ?? youtubeWantsPlayback
-            let reason = (payload["reason"] as? String ?? "").lowercased()
-            if !shouldPlay {
-                youtubeWantsPlayback = false
-                hardUserPauseActive = reason.contains("explicit-pause") || reason.contains("human") || reason.contains("remote") || hardUserPauseActive
-            } else if !hardUserPauseActive {
-                youtubeWantsPlayback = true
-            }
+            // Transport-side mirror only. Build 29 still allowed this iframe
+            // message to mutate native user intent, which left multiple sources
+            // of truth competing with the main-frame playbackIntent channel.
+            // Build 30 deliberately ignores it for intent decisions.
+            let shouldPlay = payload["shouldPlay"] as? Bool ?? false
+            let reason = payload["reason"] as? String ?? ""
+            print("[ROZZA BRIDGE] background intent observation shouldPlay=\(shouldPlay) reason=\(reason)")
         case "BackgroundVideoPlaying":
             _ = configureAudioSession()
             // Observation is NOT intent. Accept the transport observation unless
@@ -137,12 +133,10 @@ final class DJPlaybackController: NSObject, ObservableObject {
                 updateNativePlaybackState(isPlaying: true, payload: payload)
             }
         case "BackgroundVideoPause":
-            // Do not immediately mark the Lock Screen as paused when the
-            // bridge says playback intent is still PLAY; a bounded recovery
-            // is already in flight. A user Pause changes shouldPlay=false.
+            // Transport observation only. User intent is owned exclusively by
+            // playbackIntent / MPRemoteCommandCenter, never by iframe timing.
             let shouldPlay = payload["shouldPlay"] as? Bool ?? false
-            if !shouldPlay {
-                youtubeWantsPlayback = false
+            if !shouldPlay || hardUserPauseActive {
                 isYouTubePlaying = false
                 updateNativePlaybackState(isPlaying: false, payload: payload)
             }
@@ -719,37 +713,16 @@ final class DJPlaybackController: NSObject, ObservableObject {
         if let isPlaying = info["isPlaying"] as? Bool {
             nowPlayingInfo[MPNowPlayingInfoPropertyPlaybackRate] = isPlaying ? 1.0 : 0.0
 
-            // Main ROZZA -> native playback state handoff. This remains the
-            // authoritative source for lifecycle + remote-command intent.
+            // Metadata is transport observation only. Explicit user intent now
+            // has exactly one authority: playbackIntent / remote commands.
+            // This prevents a delayed Now Playing refresh from turning Play
+            // into Pause (or vice versa) during Home/Lock transitions.
             let source = (info["source"] as? String)?.lowercased()
             activePlaybackSource = source ?? activePlaybackSource
             if source == "youtube" {
-                let reportedIntent = info["wantsPlayback"] as? Bool ?? isPlaying
-                if !reportedIntent {
-                    youtubeWantsPlayback = false
-                    isYouTubePlaying = false
-                    // The main player only sets YT.wantPlay=false on an explicit
-                    // pause/stop. Lifecycle-induced PAUSED states keep wantPlay
-                    // true, so a foreground false here is safe to treat as human.
-                    if UIApplication.shared.applicationState == .active {
-                        hardUserPauseActive = true
-                    }
-                } else if !hardUserPauseActive || UIApplication.shared.applicationState == .active {
-                    // In foreground, a new main-player PLAY is a real user/app
-                    // action and may clear a previous Lock Screen hard pause.
-                    hardUserPauseActive = false
-                    youtubeWantsPlayback = true
-                    isYouTubePlaying = isPlaying
-                } else {
-                    // While backgrounded, stale recovery metadata is never
-                    // allowed to clear a hard remote Pause.
-                    youtubeWantsPlayback = false
-                    isYouTubePlaying = false
-                }
+                isYouTubePlaying = isPlaying && !hardUserPauseActive
             } else if source != nil {
                 isYouTubePlaying = false
-                youtubeWantsPlayback = false
-                hardUserPauseActive = false
             }
         }
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nowPlayingInfo
@@ -811,6 +784,15 @@ final class DJPlaybackController: NSObject, ObservableObject {
     private func configureRemoteCommands() {
         let center = MPRemoteCommandCenter.shared()
 
+        // Own the system transport surface exclusively. Removing old targets
+        // prevents duplicate handlers if the controller is recreated during
+        // development or another legacy playback object is ever initialized.
+        [center.playCommand, center.pauseCommand, center.stopCommand,
+         center.togglePlayPauseCommand, center.nextTrackCommand,
+         center.previousTrackCommand, center.changePlaybackPositionCommand,
+         center.skipForwardCommand, center.skipBackwardCommand,
+         center.likeCommand, center.dislikeCommand].forEach { $0.removeTarget(nil) }
+
         center.playCommand.isEnabled = true
         center.playCommand.addTarget { [weak self] _ in
             Task { @MainActor in self?.dispatchRemoteCommand("play", shouldPlay: true) }
@@ -844,6 +826,22 @@ final class DJPlaybackController: NSObject, ObservableObject {
         center.previousTrackCommand.isEnabled = true
         center.previousTrackCommand.addTarget { [weak self] _ in
             Task { @MainActor in self?.dispatchRemoteCommand("previous", shouldPlay: true) }
+            return .success
+        }
+
+        center.skipForwardCommand.isEnabled = true
+        center.skipForwardCommand.preferredIntervals = [15]
+        center.skipForwardCommand.addTarget { [weak self] event in
+            let seconds = (event as? MPSkipIntervalCommandEvent)?.interval ?? 15
+            Task { @MainActor in self?.dispatchRemoteCommand("seekBy", value: seconds) }
+            return .success
+        }
+
+        center.skipBackwardCommand.isEnabled = true
+        center.skipBackwardCommand.preferredIntervals = [15]
+        center.skipBackwardCommand.addTarget { [weak self] event in
+            let seconds = (event as? MPSkipIntervalCommandEvent)?.interval ?? 15
+            Task { @MainActor in self?.dispatchRemoteCommand("seekBy", value: -seconds) }
             return .success
         }
 

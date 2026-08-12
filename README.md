@@ -1,4 +1,4 @@
-# ROZZA 4.1.3 — BG STABLE · Build 29
+# ROZZA 4.2.0 — CORE STABLE · Build 30
 
 ROZZA is an iOS-first music experience built around a persistent native `WKWebView`, native audio/session integration, queue intelligence, discovery, Flow, Radio, Event Mode, and system media controls.
 
@@ -18,9 +18,9 @@ Output:
 build/ROZZA-Unsigned.ipa
 ```
 
-The build script runs `Scripts/qa-source.py` and resource checks before invoking Xcode, then validates that the resulting `.app` contains the expected Build 29 HTML, background bridge, network bridge, persistent-player markers, and native remote-command code.
+The build script runs `Scripts/qa-source.py` and resource checks before invoking Xcode, then validates that the resulting `.app` contains the expected Build 30 HTML, background bridge, network bridge, persistent-player markers, and native remote-command code.
 
-## Build 29 highlights
+## Build 30 highlights
 
 - Native vehicle / Bluetooth / AirPods / Lock Screen transport path for Play, Pause, Next, Previous, Stop and seek
 - Acknowledged, idempotent remote commands so a retry cannot double-skip

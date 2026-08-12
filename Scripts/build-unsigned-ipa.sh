@@ -66,15 +66,18 @@ check "yt_background_bridge.js present" test -s "$APP_PATH/yt_background_bridge.
 check "CFBundleDisplayName" test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleDisplayName' "$APP_PATH/Info.plist")" = "ROZZA"
 check "CFBundleIconName" test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIconName' "$APP_PATH/Info.plist")" = "AppIcon"
 check "UIBackgroundModes[0]" test "$(/usr/libexec/PlistBuddy -c 'Print :UIBackgroundModes:0' "$APP_PATH/Info.plist")" = "audio"
-check "CFBundleShortVersionString == 4.1.3" test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP_PATH/Info.plist")" = "4.1.3"
-check "CFBundleVersion == 29" test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP_PATH/Info.plist")" = "29"
+check "CFBundleShortVersionString == 4.2.0" test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP_PATH/Info.plist")" = "4.2.0"
+check "CFBundleVersion == 30" test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP_PATH/Info.plist")" = "30"
 
-# Build 29 regression guard: make sure Xcode packaged the new foreground ->
-# native playback-intent handoff, Drive Mode, artwork-signature, and the
-# main-frame playbackIntent channel + background-stability fix instead of a
-# stale HTML or Swift build.
+# Build 30 stability regression guard: make sure Xcode packaged the boot-time
+# engine restore, HD artwork, Drive Mode, and hard human-pause fence work
+# instead of a stale HTML or Swift build.
 check_cmp "packaged rozza2.html matches source" "$PROJECT_ROOT/rozza2.html" "$APP_PATH/rozza2.html"
 check_cmp "packaged yt_background_bridge.js matches source" "$PROJECT_ROOT/Resources/yt_background_bridge.js" "$APP_PATH/yt_background_bridge.js"
+check "boot-time engine restore function" grep -q "function restorePlaybackEngineAfterBoot" "$APP_PATH/rozza2.html"
+check "boot-time engine restore call" grep -q "Coordinator.restoreCurrent(shouldResume)" "$APP_PATH/rozza2.html"
+check "remote play rebuilds missing engine" grep -q "remote-play-rebuild" "$APP_PATH/rozza2.html"
+check "watchdog uses intent-preserving resume" grep -q "YT.resume('watchdog-stall')" "$APP_PATH/rozza2.html"
 check "background handoff wantsPlayback line" grep -q "wantsPlayback: st.source==='youtube' ? !!YT.wantPlay : isPlaying" "$APP_PATH/rozza2.html"
 check "native network fallback wired" grep -q "window.ROZZANativeNetwork=ROZZANativeNetwork" "$APP_PATH/rozza2.html"
 check "persistent YouTube player switch" grep -q "cmd(autoplay ? 'loadVideoById' : 'cueVideoById', \[id\])" "$APP_PATH/rozza2.html"
@@ -106,13 +109,17 @@ check "continuous playback default" grep -q "continuousPlayback:true" "$APP_PATH
 # output") and abort the whole script even though the match was found.
 # Capture to a file once so grep's exit status is the only one that matters.
 #
-# Only string literals long enough (>~15 bytes) to survive Swift's
-# small-string optimization intact are checked against the compiled binary.
-# Dropped this round: "playbackIntent" (14 bytes, right at the SSO risk
-# boundary that already burned two previous builds) and "hardUserPauseActive"
-# (a Swift property name, never a runtime string literal, so `strings` was
-# never going to find it regardless of length). qa-source.py's source-level
-# greps already cover all of these reliably.
+# Only genuine runtime string literals long enough (>~15 bytes) to survive
+# Swift's small-string optimization are checked against the compiled binary.
+# Dropped this round: "skipForwardCommand" (an MPRemoteCommandCenter SDK
+# property accessed via dot-syntax, never a string literal at all) and
+# "Metadata is transport observation only" (a // comment -- comments are
+# stripped entirely by the compiler and can never appear in any binary,
+# regardless of length). Also still dropped from previous rounds:
+# "networkProxy"/"remote-native-"/"playbackIntent" (short-literal SSO risk)
+# and "hardUserPauseActive"/"ROZZA.RemoteCommand" (property names / already
+# covered at the source level). qa-source.py's source-level greps already
+# cover all of this ground reliably.
 strings "$APP_PATH/ROZZA" > "$WORK_DIR/rozza-binary-strings.txt" || true
 check "compiled binary contains background-capture log line" grep -q "Background capture wantsPlayback=" "$WORK_DIR/rozza-binary-strings.txt"
 check "compiled binary contains native pause-fence reason string" grep -q "native-human-pause-fence" "$WORK_DIR/rozza-binary-strings.txt"

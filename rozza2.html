@@ -778,7 +778,7 @@ html,body{background:#050507}
             <div class="set-row"><div><div class="sl">Vehicle controls</div><div class="sd" id="vehicleControlStatus">Ready · waiting for a command</div></div><button class="text-action" id="copyVehicleDiagnosticsBtn">Copy</button></div>
             <div class="set-row"><div><div class="sl">Playback diagnostics</div><div class="sd">Copy a private technical timeline when something fails</div></div><button class="text-action" id="copyDiagnosticsBtn">Copy</button></div>
           </div>
-          <div class="ver">ROZZA 4.1.3 · BG STABLE</div>
+          <div class="ver">ROZZA 4.2.0 · CORE STABLE</div>
         </section>
       </main>
 
@@ -1550,8 +1550,8 @@ const Audio = (() => {
     el.addEventListener('timeupdate', () => UI.onTime(el.currentTime, el.duration));
     el.addEventListener('loadedmetadata', () => { UI.onTime(el.currentTime, el.duration); SessionState.applyIfPending('audio'); });
     el.addEventListener('waiting', () => { if(PlaybackState.get().source==='audio') PlaybackState.set({status:'buffering'}); });
-    el.addEventListener('play', () => { if(PlaybackState.get().source==='audio') PlaybackState.set({status:'playing'}); UI.onPlayState(true); const stableTrack=current; setTimeout(()=>{ if(current===stableTrack && Audio.playing) SmartQueue.ensure(false); },5000); });
-    el.addEventListener('pause', () => { if(PlaybackState.get().source==='audio' && !el.ended) PlaybackState.set({status:'paused'}); UI.onPlayState(false); });
+    el.addEventListener('play', () => { if(PlaybackState.get().source==='audio') PlaybackState.set({status:'playing'}); try{ SessionState.save(true,true); }catch(_){} UI.onPlayState(true); const stableTrack=current; setTimeout(()=>{ if(current===stableTrack && Audio.playing) SmartQueue.ensure(false); },5000); });
+    el.addEventListener('pause', () => { if(PlaybackState.get().source==='audio' && !el.ended) PlaybackState.set({status:'paused'}); try{ SessionState.save(true,false); }catch(_){} UI.onPlayState(false); });
     el.addEventListener('ended', () => Coordinator.onEnded());
     el.addEventListener('error', () => Coordinator.onAudioError());
   }
@@ -1676,7 +1676,7 @@ const YT = (() => {
       cmd('getPlayerState',[]);
       if(tick%4===0) cmd('getDuration',[]);
       if(tick%6===0) cmd('getVolume',[]);
-    },1000);
+    },1250);
   }
   function stopPoll(){ if(pollT){ clearInterval(pollT); pollT=null; } }
   function buildIframe(id, autoplay){
@@ -1746,6 +1746,7 @@ const YT = (() => {
       postPlaybackIntentToNative(true, reason);
       syncBackgroundIntent(true, reason);
       if(backgroundBridgeEnabled) setBackgroundBridge(true, true, reason);
+      try{ SessionState.save(true,true); }catch(_){}
       if(ready) cmd('playVideo',[]);
       else if(currentId && !iframe) buildIframe(currentId, true);
     },
@@ -1771,6 +1772,7 @@ const YT = (() => {
       postPlaybackIntentToNative(false, reason);
       syncBackgroundIntent(false, 'explicit-pause');
       if(backgroundBridgeEnabled) setBackgroundBridge(true, false, 'explicit-pause');
+      try{ SessionState.save(true,false); }catch(_){}
       if(ready) cmd('pauseVideo',[]);
     },
     seek(t){
@@ -1960,7 +1962,7 @@ const Coordinator = {
         // bounded nudges cover CUED/UNSTARTED transitions without creating a
         // new autoplay permission boundary for every song.
         [220,700,1500].forEach(delay=>setTimeout(()=>{
-          if(current===it && current.source==='youtube' && YT.wantPlay && !YT.playing && !current.unavailable) YT.play();
+          if(current===it && current.source==='youtube' && YT.wantPlay && !YT.playing && !current.unavailable) YT.resume('track-start-nudge-'+delay);
         }, delay));
         this._ytT = setTimeout(()=>{
           if(current===it && current.source==='youtube' && !YT.playing && !current.unavailable){
@@ -1985,8 +1987,32 @@ const Coordinator = {
     saveQueue(); updateNowPlaying(); updateMini(); updateQueueUI(); mediaSession(); scheduleProductMemoryRender();
     repositionYT();
   },
+  restoreCurrent(autoplay=false){
+    if(!current || Q.idx<0 || Q.idx>=Q.items.length) return false;
+    const it=current;
+    ROZZADebug.player('RESTORE ENGINE source='+it.source+' autoplay='+!!autoplay+' index='+Q.idx);
+    clearTimeout(this._autoT); clearTimeout(this._ytT); clearTimeout(this._switchT);
+    this.isSwitchingTrack=true;
+    this._switchT=setTimeout(()=>{ this.isSwitchingTrack=false; },900);
+    if(it.source==='youtube'){
+      setActiveSource('youtube',it);
+      activateNativeAudioSession();
+      YT.load(it.videoId||it.id,!!autoplay);
+      if(!autoplay){ PlaybackState.set({status:'paused'}); UI.onPlayState(false); }
+    } else if(it.source==='local' && (it.needsReimport || !it.url)){
+      PlaybackState.set({source:'none',status:'idle',track:null});
+      return false;
+    } else {
+      setActiveSource('audio',it);
+      Audio.vol(settings.volume);
+      Audio.load(it.url);
+      if(autoplay) Audio.play().catch(()=>{}); else { PlaybackState.set({status:'paused'}); UI.onPlayState(false); }
+    }
+    updateNowPlaying(); updateMini(); updateQueueUI(); repositionYT();
+    return true;
+  },
   toggle(){
-    if(!current){ if(Q.items.length) this.playIndex(0); return; }
+    if(!current){ if(Q.items.length) this.playIndex(0,true,'toggle-empty'); return; }
     if(current.source==='youtube'){
       setNeedsTap(false);
       if(YT.playing) YT.pause('user');
@@ -2047,7 +2073,7 @@ const Coordinator = {
 
     if(s===1){
       YT.markPlaying();
-      PlaybackState.set({status:'playing'}); UI.onPlayState(true); setNeedsTap(false);
+      PlaybackState.set({status:'playing'}); try{ SessionState.save(true,true); }catch(_){} UI.onPlayState(true); setNeedsTap(false);
       SessionState.applyIfPending('youtube');
       clearTimeout(this._ytT); clearTimeout(this._autoT);
       const stableTrack=current;
@@ -2151,7 +2177,7 @@ const RemoteDiagnostics={
   },
   snapshot(){
     const st=PlaybackState.get();
-    return {version:'4.1.3',build:29,nativeShell:IS_NATIVE_SHELL,last:this.last,queueIndex:Q.idx,queueCount:Q.items.length,current:current?{id:trackKey(current),title:current.title,source:current.source}:null,playback:st,youtube:{state:YT.state,wantPlay:YT.wantPlay,playing:YT.playing,mounted:YT.mounted,videoId:YT.videoId},foreground:ROZZAAppForeground};
+    return {version:'4.2.0',build:30,nativeShell:IS_NATIVE_SHELL,last:this.last,queueIndex:Q.idx,queueCount:Q.items.length,current:current?{id:trackKey(current),title:current.title,source:current.source}:null,playback:st,youtube:{state:YT.state,wantPlay:YT.wantPlay,playing:YT.playing,mounted:YT.mounted,videoId:YT.videoId},foreground:ROZZAAppForeground};
   }
 };
 window.ROZZARemoteDiagnostics=RemoteDiagnostics;
@@ -2159,7 +2185,10 @@ window.ROZZARemoteDiagnostics=RemoteDiagnostics;
 window.ROZZANativeControls = {
   play(){
     if(!current){ if(Q.items.length) Coordinator.playIndex(0,true,'remote-play'); return {ok:!!Q.items.length}; }
-    if(current.source==='youtube') YT.play('system-remote-play');
+    if(current.source==='youtube'){
+      if(!YT.mounted || YT.videoId!==(current.videoId||current.id)) Coordinator.playIndex(Q.idx,true,'remote-play-rebuild');
+      else YT.play('system-remote-play');
+    }
     else if(!Audio.playing) Audio.play().catch(()=>{});
     return {ok:true,action:'play',index:Q.idx,count:Q.items.length};
   },
@@ -2195,7 +2224,7 @@ window.ROZZANativeControls = {
     else if(action==='pause'||action==='stop') result=this.pause();
     else if(action==='toggle'){ if(current?.source==='youtube'){ if(YT.wantPlay) result=this.pause(); else result=this.play(); } else { Coordinator.toggle(); result={ok:true,action,index:Q.idx,count:Q.items.length}; } }
     else if(action==='next'){ result=this.next(); }
-    else if(action==='previous'){ result=this.previous(); if(current){ if(current.source==='youtube')YT.play(); else Audio.play().catch(()=>{}); } }
+    else if(action==='previous'){ result=this.previous(); }
     else if(action==='seekTo') result=this.seekTo(Number(value)||0);
     else if(action==='seekBy') result=this.seekBy(Number(value)||0);
     else if(action==='like'){
@@ -2526,7 +2555,7 @@ function shareCurrent(){if(!current)return;const url=current.source==='youtube'?
 
 const SessionState=(()=>{
   let saved=store.get('session',null), lastWrite=0, pendingApplied=false;
-  function save(force=false){
+  function save(force=false, intentOverride=null){
     if(!settings.sessionContinuity||!current) return; const now=Date.now(); if(!force&&now-lastWrite<4000) return;
     const st=PlaybackState.get(); const engineLoaded=current.source==='youtube'?YT.mounted:!!Audio.el.src;
     // Boot renders the restored track before either playback engine is loaded.
@@ -2534,7 +2563,7 @@ const SessionState=(()=>{
     if(!engineLoaded && st.source==='none' && saved&&saved.key===trackKey(current)&&saved.position>4) return;
     lastWrite=now;
     const pos=current.source==='youtube'?YT.time:Audio.time; const dur=current.source==='youtube'?YT.dur:Audio.dur;
-    saved={ key:trackKey(current), track:safeTrackCopy(current), idx:Q.idx, position:Math.max(0,pos||0), duration:dur||current.duration||0, wasPlaying:st.status==='playing'||st.status==='buffering', updatedAt:now };
+    saved={ key:trackKey(current), track:safeTrackCopy(current), idx:Q.idx, position:Math.max(0,pos||0), duration:dur||current.duration||0, wasPlaying:intentOverride===null?(st.status==='playing'||st.status==='buffering'):!!intentOverride, updatedAt:now };
     store.set('session',saved); updatePlayedPosition(current,saved.position); store.set('playedTracks',playedTracks);
     renderContinueListening();
   }
@@ -2643,8 +2672,16 @@ const PlaybackWatchdog=(()=>{
   function note(t){if(!isFinite(t))return;if(t>lastTime+.35||t<lastTime-2){lastTime=t;lastAdvanceAt=Date.now();recoveryAt=0;}}
   function tick(){
     if(!settings.watchdog||!ROZZAAppForeground||!current||Coordinator.isSwitchingTrack||ROZZAInterruptionActive)return;
-    const st=PlaybackState.get();if(st.status!=='playing'&&st.status!=='buffering')return;const now=Date.now();if(now-lastAdvanceAt<12000)return;
-    if(!recoveryAt){recoveryAt=now;ROZZADebug.player('WATCHDOG stalled source='+current.source+' t='+lastTime.toFixed(1));if(current.source==='youtube'&&YT.wantPlay)YT.play();else if(current.source!=='youtube')Audio.play().catch(()=>{});toast('ROZZA recovered a playback stall.','info','WATCHDOG');return;}
+    const st=PlaybackState.get();
+    // Self-heal the engine itself before treating a lack of progress as a bad
+    // song. This covers a WKWebView/player mount disappearing unexpectedly.
+    if(current.source==='youtube' && (st.status==='loading'||st.status==='playing'||st.status==='buffering') && (!YT.mounted || YT.videoId!==(current.videoId||current.id))){
+      ROZZADebug.player('WATCHDOG engine missing — rebuilding current YouTube track');
+      Coordinator.restoreCurrent(true);
+      lastAdvanceAt=Date.now(); recoveryAt=0; return;
+    }
+    if(st.status!=='playing'&&st.status!=='buffering')return;const now=Date.now();if(now-lastAdvanceAt<12000)return;
+    if(!recoveryAt){recoveryAt=now;ROZZADebug.player('WATCHDOG stalled source='+current.source+' t='+lastTime.toFixed(1));if(current.source==='youtube'&&YT.wantPlay)YT.resume('watchdog-stall');else if(current.source!=='youtube')Audio.play().catch(()=>{});toast('ROZZA recovered a playback stall.','info','WATCHDOG');return;}
     if(now-recoveryAt>9000){ROZZADebug.player('WATCHDOG skipping stalled track');lastAdvanceAt=now;recoveryAt=0;Coordinator.next(true);}
   }
   function start(){if(timer)return;timer=setInterval(tick,4000);}
@@ -2794,7 +2831,7 @@ const UI = {
       _lastMediaPositionPush=now;
       try{ navigator.mediaSession.setPositionState({ duration:d, playbackRate:1, position:clamp(t,0,d) }); }catch(e){}
     }
-    if(now-_lastNativePositionPush>2500){
+    if(now-_lastNativePositionPush>4000){
       _lastNativePositionPush=now;
       postNowPlayingToNative();
     }
@@ -2977,8 +3014,8 @@ function playTrackNow(track, options={}){
   if(options.haptic!==false) haptic('medium');
   activateNativeAudioSession();
   const existing=Q.items.findIndex(x=>x.source===track.source && (x.videoId||x.id)===(track.videoId||track.id));
-  if(existing>=0) Coordinator.playIndex(existing,true);
-  else addToQueue(track,true);
+  if(existing>=0) Coordinator.playIndex(existing,true,options.reason||'result-tap');
+  else { const added=addToQueue(track,false); Coordinator.playIndex(Q.items.indexOf(added),true,options.reason||'result-tap'); }
   if(options.openNowPlaying) openSheet('np');
   toast('Playing now', 'ok', 'ROZZA');
 }
@@ -3117,7 +3154,7 @@ let pendingReimport=null;
 const Viz=(()=>{
   const np=()=>$('#npSpec'), dk=()=>$('#deckSpec'); const BARS=28; const sim=new Float32Array(BARS); let t=0;
   function draw(canvas,bars){ if(!canvas) return; const ctx=canvas.getContext('2d'); const W=canvas.width,H=canvas.height; ctx.clearRect(0,0,W,H); const n=bars.length,gap=2,bw=(W-gap*(n-1))/n; for(let i=0;i<n;i++){ const v=clamp(bars[i],0,1); const bh=Math.max(2,v*(H-2)); const x=i*(bw+gap); const g=ctx.createLinearGradient(0,H,0,0); g.addColorStop(0,'#ff2e63'); g.addColorStop(0.6,'#ff5c8a'); g.addColorStop(1,'#ffb347'); ctx.fillStyle=g; ctx.globalAlpha=0.55+v*0.45; ctx.fillRect(x,H-bh,bw,bh); } ctx.globalAlpha=1; }
-  let lastFrame=0; function frame(ts=0){ if(document.hidden){ setTimeout(()=>requestAnimationFrame(frame),500); return; } if(ts-lastFrame<50){ requestAnimationFrame(frame); return; } lastFrame=ts; t+=0.05; const playing=UI._playing; const amp=(playing&&settings.simViz)?1:0.12; for(let i=0;i<BARS;i++){ const base=(Math.sin(t*1.7+i*0.5)*0.5+0.5)*(Math.sin(t*0.7+i*0.21)*0.4+0.6); const noise=Math.random()*0.25; const target=(base*0.7+noise)*amp; sim[i]+=(target-sim[i])*0.25; } draw(np(),sim.slice(0,BARS)); const mini=[]; for(let i=0;i<24;i++) mini.push(sim[Math.floor(i*BARS/24)]); draw(dk(),mini); requestAnimationFrame(frame); }
+  let lastFrame=0; function frame(ts=0){ if(document.hidden){ setTimeout(()=>requestAnimationFrame(frame),700); return; } const playing=UI._playing; const interval=settings.batterySaver?180:(playing?80:240); if(ts-lastFrame<interval){ requestAnimationFrame(frame); return; } lastFrame=ts; t+=playing?0.06:0.025; const amp=(playing&&settings.simViz)?1:0.08; for(let i=0;i<BARS;i++){ const base=(Math.sin(t*1.7+i*0.5)*0.5+0.5)*(Math.sin(t*0.7+i*0.21)*0.4+0.6); const noise=Math.random()*0.18; const target=(base*0.7+noise)*amp; sim[i]+=(target-sim[i])*0.22; } const a=np(); if(a && a.offsetParent!==null) draw(a,sim); const b=dk(); if(b && b.offsetParent!==null){ const mini=[]; for(let i=0;i<24;i++) mini.push(sim[Math.floor(i*BARS/24)]); draw(b,mini); } requestAnimationFrame(frame); }
   return { start(){ requestAnimationFrame(frame); } };
 })();
 const Dust=(()=>{
@@ -3271,7 +3308,7 @@ function wire(){
   $('#clrMirrors').onclick=()=>{ store.del('mirrors'); loadPool(); warmup(); toast('Mirror cache reset','ok','DATA'); };
   $('#queueClear').onclick=()=>{ clearQueue(); toast('Queue cleared','ok','QUEUE'); };
   const copyVehicleDiag=$('#copyVehicleDiagnosticsBtn'); if(copyVehicleDiag) copyVehicleDiag.onclick=async()=>{ const payload=JSON.stringify(RemoteDiagnostics.snapshot(),null,2); try{await navigator.clipboard.writeText(payload);toast('Vehicle diagnostics copied','ok','DRIVE REMOTE');}catch(e){toast('Could not access clipboard','warn','DRIVE REMOTE');} };
-  const copyDiag=$('#copyDiagnosticsBtn'); if(copyDiag) copyDiag.onclick=async()=>{ const payload='ROZZA 4.1.3 BG STABLE\n'+JSON.stringify(ROZZADebug.getState(),null,2)+'\n\n'+ROZZADebug.getLog(); try{await navigator.clipboard.writeText(payload);toast('Diagnostics copied','ok','SUPPORT');}catch(e){toast('Could not access clipboard','warn','SUPPORT');} };
+  const copyDiag=$('#copyDiagnosticsBtn'); if(copyDiag) copyDiag.onclick=async()=>{ const payload='ROZZA 4.2.0 CORE STABLE\n'+JSON.stringify(ROZZADebug.getState(),null,2)+'\n\n'+ROZZADebug.getLog(); try{await navigator.clipboard.writeText(payload);toast('Diagnostics copied','ok','SUPPORT');}catch(e){toast('Could not access clipboard','warn','SUPPORT');} };
   const netRetry=$('#networkRetry'); if(netRetry) netRetry.onclick=()=>{ refreshRegistries().then(()=>warmup()); };
   window.addEventListener('offline',()=>{ const b=$('#networkBanner');if(b)b.classList.add('show');setConn('quiet'); });
   window.addEventListener('online',()=>{ const b=$('#networkBanner');if(b)b.classList.remove('show');refreshRegistries().then(()=>warmup());toast('Back online','ok','CONNECTION'); });
@@ -3348,6 +3385,18 @@ function initDevPanel(){
   DevLog.push('[ROZZA DEV] Diagnostics panel ready. DEBUG='+DEBUG);
 }
 
+
+function restorePlaybackEngineAfterBoot(){
+  if(!current || Q.idx<0 || Q.idx>=Q.items.length) return;
+  const ss=SessionState.get();
+  const sameSession=!!(ss && ss.key===trackKey(current));
+  // Only auto-resume a session that was genuinely playing. A human pause is
+  // persisted immediately, so relaunch never turns a paused session back on.
+  const shouldResume=!!(settings.sessionContinuity && sameSession && ss.wasPlaying);
+  ROZZADebug.player('BOOT RESTORE current='+trackKey(current)+' wasPlaying='+(sameSession?!!ss.wasPlaying:false)+' autoResume='+shouldResume);
+  Coordinator.restoreCurrent(shouldResume);
+}
+
 async function boot(){
   if(store.get('networkEpoch',0)!==23){ store.del('mirrors'); store.set('networkEpoch',23); }
   loadPool(); loadQueue(); wire(); Dust.start(); Viz.start(); const nb=$('#networkBanner'); if(nb&&!navigator.onLine) nb.classList.add('show');
@@ -3360,6 +3409,7 @@ async function boot(){
   buildTicker(); updateLiveAtmosphere(current);
   UI.onPlayState(false); PlaybackWatchdog.start();
   Audio.vol(settings.volume); YT.setVol(settings.volume);
+  setTimeout(restorePlaybackEngineAfterBoot,180);
   // Don't flood startup with registry + health + recommendation requests.
   // Search is usable immediately from the bundled seed list; network discovery
   // warms quietly after first paint.
