@@ -55,6 +55,18 @@ check_cmp() {
     exit 1
   fi
 }
+# Negative source-text checks (confirm a string is absent) go through this
+# helper rather than through check(), since passing a literal "!" as a
+# check() argument tries to run a command named "!" instead of negating.
+check_absent() {
+  local desc="$1" pattern="$2" file="$3"
+  if grep -q "$pattern" "$file"; then
+    echo "  [FAIL] $desc"
+    exit 1
+  else
+    echo "  [OK]   $desc"
+  fi
+}
 
 APP_PATH="$(find "$WORK_DIR/DerivedData/Build/Products/Release-iphoneos" -maxdepth 1 -type d -name '*.app' -print -quit)"
 check "app bundle found" test -n "$APP_PATH"
@@ -66,12 +78,13 @@ check "yt_background_bridge.js present" test -s "$APP_PATH/yt_background_bridge.
 check "CFBundleDisplayName" test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleDisplayName' "$APP_PATH/Info.plist")" = "ROZZA"
 check "CFBundleIconName" test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIconName' "$APP_PATH/Info.plist")" = "AppIcon"
 check "UIBackgroundModes[0]" test "$(/usr/libexec/PlistBuddy -c 'Print :UIBackgroundModes:0' "$APP_PATH/Info.plist")" = "audio"
-check "CFBundleShortVersionString == 4.2.0" test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP_PATH/Info.plist")" = "4.2.0"
-check "CFBundleVersion == 30" test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP_PATH/Info.plist")" = "30"
+check "CFBundleShortVersionString == 4.2.2" test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP_PATH/Info.plist")" = "4.2.2"
+check "CFBundleVersion == 32" test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP_PATH/Info.plist")" = "32"
 
-# Build 30 stability regression guard: make sure Xcode packaged the boot-time
-# engine restore, HD artwork, Drive Mode, and hard human-pause fence work
-# instead of a stale HTML or Swift build.
+# Build 32 remote/background stability guard: make sure Xcode packaged the
+# boot-time engine restore, Drive Mode, HD artwork, hard human-pause fence,
+# and the WebKit-startup-interruption / transport-only-suspend fix instead
+# of a stale HTML or Swift build.
 check_cmp "packaged rozza2.html matches source" "$PROJECT_ROOT/rozza2.html" "$APP_PATH/rozza2.html"
 check_cmp "packaged yt_background_bridge.js matches source" "$PROJECT_ROOT/Resources/yt_background_bridge.js" "$APP_PATH/yt_background_bridge.js"
 check "boot-time engine restore function" grep -q "function restorePlaybackEngineAfterBoot" "$APP_PATH/rozza2.html"
@@ -97,13 +110,13 @@ check "HD artwork candidate chain" grep -q "maxresdefault.jpg" "$APP_PATH/rozza2
 check "HD artwork loader wired" grep -q "loadBestArtworkImage" "$APP_PATH/rozza2.html"
 check "intent-preserving resume path" grep -q "YT.resume(reason)" "$APP_PATH/rozza2.html"
 check "main-frame playbackIntent dispatch" grep -q "postPlaybackIntentToNative(true, reason)" "$APP_PATH/rozza2.html"
-if grep -q "This video can’t be embedded right now." "$APP_PATH/rozza2.html"; then
-  echo "  [FAIL] legacy embed-error copy removed"
-  exit 1
-else
-  echo "  [OK]   legacy embed-error copy removed"
-fi
+check_absent "legacy embed-error copy removed" "This video can’t be embedded right now." "$APP_PATH/rozza2.html"
 check "continuous playback default" grep -q "continuousPlayback:true" "$APP_PATH/rozza2.html"
+check "transport-only interruption suspend command" grep -q "CMD SUSPEND reason=" "$APP_PATH/rozza2.html"
+check "native interruption suspend/resume bridge" grep -q "suspendForInterruption" "$APP_PATH/rozza2.html"
+check "automatic player self-heal wired" grep -q "automatic-start-self-heal" "$APP_PATH/rozza2.html"
+check "player rebuild log line present" grep -q "REBUILD PLAYER id=" "$APP_PATH/rozza2.html"
+check_absent "manual second-Play fallback removed" "Tap Play once to start this YouTube session." "$APP_PATH/rozza2.html"
 # `strings | grep -q` is unsafe under pipefail: grep -q exits as soon as it
 # finds a match, which can SIGPIPE `strings` mid-write ("failed to flush
 # output") and abort the whole script even though the match was found.
@@ -111,19 +124,22 @@ check "continuous playback default" grep -q "continuousPlayback:true" "$APP_PATH
 #
 # Only genuine runtime string literals long enough (>~15 bytes) to survive
 # Swift's small-string optimization are checked against the compiled binary.
-# Dropped this round: "skipForwardCommand" (an MPRemoteCommandCenter SDK
-# property accessed via dot-syntax, never a string literal at all) and
-# "Metadata is transport observation only" (a // comment -- comments are
-# stripped entirely by the compiler and can never appear in any binary,
-# regardless of length). Also still dropped from previous rounds:
-# "networkProxy"/"remote-native-"/"playbackIntent" (short-literal SSO risk)
-# and "hardUserPauseActive"/"ROZZA.RemoteCommand" (property names / already
-# covered at the source level). qa-source.py's source-level greps already
-# cover all of this ground reliably.
+# Dropped this round: "activateForNativePlaybackIfNeeded" and
+# "beginReceivingRemoteControlEvents" (both Swift/SDK method names accessed
+# via dot-syntax, never string literals at all -- same class of bug as
+# "skipForwardCommand" dropped last round). Also dropped two negative binary
+# checks that could never have failed regardless of what shipped: "pauseYouTube
+# reason: iOS audio interruption began" and "try? ROZZAAudioSession.shared.
+# configureAndActivateIfNeeded()" are both Swift call-site syntax, not
+# anything that was ever compiled as contiguous string data -- checking for
+# their *absence* in `strings` output was trivially always true. Everything
+# these were meant to guard is already covered reliably by qa-source.py's
+# source-level greps.
 strings "$APP_PATH/ROZZA" > "$WORK_DIR/rozza-binary-strings.txt" || true
 check "compiled binary contains background-capture log line" grep -q "Background capture wantsPlayback=" "$WORK_DIR/rozza-binary-strings.txt"
 check "compiled binary contains native pause-fence reason string" grep -q "native-human-pause-fence" "$WORK_DIR/rozza-binary-strings.txt"
 check "compiled binary contains main-player intent log line" grep -q "main-player PLAY reason=" "$WORK_DIR/rozza-binary-strings.txt"
+check "compiled binary contains startup-interruption classifier log line" grep -q "Ignored WebKit startup interruption" "$WORK_DIR/rozza-binary-strings.txt"
 
 ditto "$APP_PATH" "$WORK_DIR/Payload/ROZZA.app"
 ditto -c -k --sequesterRsrc --keepParent "$WORK_DIR/Payload" "$OUTPUT_IPA"

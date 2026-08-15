@@ -108,10 +108,14 @@ struct ROZZAWebAppView: UIViewRepresentable {
 
         private func activateAudioSession() {
             do {
-                try ROZZAAudioSession.shared.configureAndActivateIfNeeded()
+                // WKWebView is the transport owner for YouTube/HTMLAudio.
+                // Configure the category, but do not force native activation;
+                // repeated setActive(true) calls were producing a real-device
+                // interruption loop that immediately killed YouTube startup.
+                try ROZZAAudioSession.shared.configureCategoryIfNeeded()
             } catch {
                 let nsError = error as NSError
-                print("[ROZZA WebView] audioSession activation failed domain=\(nsError.domain) OSStatus=\(nsError.code) error=\(nsError)")
+                print("[ROZZA WebView] audio category configuration failed domain=\(nsError.domain) OSStatus=\(nsError.code) error=\(nsError)")
             }
         }
 
@@ -132,7 +136,7 @@ struct ROZZAWebAppView: UIViewRepresentable {
             let timeout = min(max(requestedTimeout, 2.0), 12.0)
             var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: timeout)
             request.setValue("application/json, text/plain, */*", forHTTPHeaderField: "Accept")
-            request.setValue("ROZZA/4.2.0 iOS", forHTTPHeaderField: "User-Agent")
+            request.setValue("ROZZA/4.2.2 iOS", forHTTPHeaderField: "User-Agent")
 
             URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
                 let status = (response as? HTTPURLResponse)?.statusCode ?? 0

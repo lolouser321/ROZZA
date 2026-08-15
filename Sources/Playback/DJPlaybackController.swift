@@ -43,6 +43,9 @@ final class DJPlaybackController: NSObject, ObservableObject {
     private var artworkTask: URLSessionDataTask?
     private var lastArtworkURL: String?
     private var lastNowPlayingTrackID: String?
+    private var lastYouTubePlayIntentAt: TimeInterval = 0
+    private var genuineInterruptionActive = false
+    private var ignoredStartupInterruptionCount = 0
     private var statusTimer: Timer?
     private var observers: [NSObjectProtocol] = []
 
@@ -68,6 +71,7 @@ final class DJPlaybackController: NSObject, ObservableObject {
         statusTimer?.invalidate()
         artworkTask?.cancel()
         observers.forEach(NotificationCenter.default.removeObserver)
+        UIApplication.shared.endReceivingRemoteControlEvents()
     }
 
     func attach(webView: WKWebView) {
@@ -168,9 +172,15 @@ final class DJPlaybackController: NSObject, ObservableObject {
         guard (payload["source"] as? String)?.lowercased() == "youtube",
               let shouldPlay = payload["shouldPlay"] as? Bool else { return }
         let reason = payload["reason"] as? String ?? "main-player"
+        activePlaybackSource = "youtube"
         if shouldPlay {
             youtubeWantsPlayback = true
             hardUserPauseActive = false
+            if let at = payload["at"] as? NSNumber {
+                lastYouTubePlayIntentAt = at.doubleValue / 1000.0
+            } else {
+                lastYouTubePlayIntentAt = Date().timeIntervalSince1970
+            }
             _ = configureAudioSession()
             print("[ROZZA INTENT] main-player PLAY reason=\(reason)")
         } else {
@@ -216,6 +226,7 @@ final class DJPlaybackController: NSObject, ObservableObject {
             lastError = "Import an MP3/M4A or load a direct audio URL for Deck B first."
             return
         }
+        guard activateNativePlaybackSession() else { return }
         avPlayer.play()
     }
 
@@ -252,7 +263,7 @@ final class DJPlaybackController: NSObject, ObservableObject {
     }
 
     private func loadDeckB(url: URL, name: String) {
-        guard configureAudioSession() else { return }
+        guard activateNativePlaybackSession() else { return }
         avPlayer.replaceCurrentItem(with: AVPlayerItem(url: url))
         deckBName = name
         lastError = nil
@@ -332,17 +343,37 @@ final class DJPlaybackController: NSObject, ObservableObject {
         }
     }
 
+    /// WebKit media path: configure the category but do not force native
+    /// activation. YouTube/HTMLAudio is the audio owner and will activate the
+    /// process media session as needed.
     @discardableResult
     private func configureAudioSession() -> Bool {
         do {
-            try ROZZAAudioSession.shared.configureAndActivateIfNeeded()
+            try ROZZAAudioSession.shared.configureCategoryIfNeeded()
             let session = AVAudioSession.sharedInstance()
             outputRoute = session.currentRoute.outputs.map(\.portName).joined(separator: ", ")
             systemOutputVolume = session.outputVolume
             return true
         } catch {
             let nsError = error as NSError
-            lastError = "Audio session failed (OSStatus \(nsError.code)): \(nsError.localizedDescription)"
+            lastError = "Audio category failed (OSStatus \(nsError.code)): \(nsError.localizedDescription)"
+            return false
+        }
+    }
+
+    /// Native-only AVPlayer path. This is the only regular playback path that
+    /// explicitly calls setActive(true).
+    @discardableResult
+    private func activateNativePlaybackSession() -> Bool {
+        do {
+            try ROZZAAudioSession.shared.activateForNativePlaybackIfNeeded()
+            let session = AVAudioSession.sharedInstance()
+            outputRoute = session.currentRoute.outputs.map(\.portName).joined(separator: ", ")
+            systemOutputVolume = session.outputVolume
+            return true
+        } catch {
+            let nsError = error as NSError
+            lastError = "Native audio activation failed (OSStatus \(nsError.code)): \(nsError.localizedDescription)"
             return false
         }
     }
@@ -377,6 +408,7 @@ final class DJPlaybackController: NSObject, ObservableObject {
         youtubeWantsPlayback = shouldPlay
         if shouldPlay {
             hardUserPauseActive = false
+            lastYouTubePlayIntentAt = Date().timeIntervalSince1970
             _ = configureAudioSession()
         } else {
             // Human/system Pause is a hard fence: cancel every lifecycle resume
@@ -416,6 +448,9 @@ final class DJPlaybackController: NSObject, ObservableObject {
         }
         remoteCommandGeneration += 1
         let generation = remoteCommandGeneration
+        // Keep the process declared as a playback app for Lock Screen / vehicle
+        // routing, but never force native AVAudioSession activation for YouTube.
+        _ = configureAudioSession()
         if let resolvedShouldPlay {
             registerExplicitPlaybackIntent(shouldPlay: resolvedShouldPlay, reason: "remote-\(resolvedAction)")
         }
@@ -549,7 +584,7 @@ final class DJPlaybackController: NSObject, ObservableObject {
                 self.backgroundResumeGeneration += 1
                 let generation = self.backgroundResumeGeneration
                 self.beginBackgroundTransitionTask()
-                try? ROZZAAudioSession.shared.configureAndActivateIfNeeded()
+                _ = self.configureAudioSession()
                 let nativeIntentWasPlaying = self.resumeYouTubeAfterBackgroundTransition
                 self.evaluateYouTube("if(window.ROZZANativeControls) window.ROZZANativeControls.backgroundPrepare();") { result, _ in
                     guard generation == self.backgroundResumeGeneration else { return }
@@ -575,7 +610,7 @@ final class DJPlaybackController: NSObject, ObservableObject {
             print("[ROZZA NATIVE] App background")
             Task { @MainActor in
                 guard let self else { return }
-                try? ROZZAAudioSession.shared.configureAndActivateIfNeeded()
+                _ = self.configureAudioSession()
                 self.evaluateYouTube("if(window.ROZZANativeControls) window.ROZZANativeControls.background();")
                 // If willResignActive captured a playing YouTube session, make
                 // one immediate native kick too. The later bounded kicks are
@@ -613,40 +648,84 @@ final class DJPlaybackController: NSObject, ObservableObject {
     private func handleInterruption(_ notification: Notification) {
         guard let rawType = notification.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
               let type = AVAudioSession.InterruptionType(rawValue: rawType) else { return }
+
+        let reasonRaw = (notification.userInfo?[AVAudioSessionInterruptionReasonKey] as? NSNumber)?.uintValue
+        let reasonText = reasonRaw.map { String($0) } ?? "nil"
+        let appState = UIApplication.shared.applicationState
+        let now = Date().timeIntervalSince1970
+        let sincePlay = lastYouTubePlayIntentAt > 0 ? now - lastYouTubePlayIntentAt : TimeInterval.greatestFiniteMagnitude
+
         if type == .began {
-            print("[ROZZA NATIVE] Interruption began")
-            // Told to JS first, before anything is paused: a PAUSED that
-            // arrives while a real interruption is active must never be
-            // read as "unexpected" and fought with a recovery attempt.
+            // The real-device logs from Build 30 showed a repeatable pattern:
+            // every YouTube load emitted AVAudioSession `.began` while the
+            // iframe was only BUFFERING/UNSTARTED. The old handler called
+            // window.player.pauseVideo(), whose facade maps to YT.pause() and
+            // therefore converted an OS transport event into a *human* Pause.
+            //
+            // When this exact startup signature occurs, it is a WebKit/native
+            // audio-owner handoff, not a user request. Ignore it completely.
+            let likelyWebKitStartupHandoff =
+                activePlaybackSource == "youtube" &&
+                appState == .active &&
+                youtubeWantsPlayback &&
+                !hardUserPauseActive &&
+                !isYouTubePlaying &&
+                sincePlay >= 0 && sincePlay < 1.75
+
+            if likelyWebKitStartupHandoff {
+                ignoredStartupInterruptionCount += 1
+                ROZZAAudioSession.shared.markInterrupted()
+                print("[ROZZA NATIVE] Ignored WebKit startup interruption #\(ignoredStartupInterruptionCount) reasonRaw=\(reasonText) sincePlay=\(String(format: "%.3f", sincePlay)) appState=active")
+                return
+            }
+
+            genuineInterruptionActive = true
+            print("[ROZZA NATIVE] Genuine interruption began reasonRaw=\(reasonText) appState=\(appState.rawValue)")
             evaluateYouTube("if(window.ROZZANativeControls) window.ROZZANativeControls.interruptionBegan();")
             ROZZAAudioSession.shared.markInterrupted()
             resumeAVAfterInterruption = avPlayer.timeControlStatus == .playing
-            // Captured before pausing — YouTube's own isYouTubePlaying already
-            // reflects rozza2.html's real state via the nowPlaying bridge, not
-            // a guess.
-            resumeYouTubeAfterInterruption = isYouTubePlaying
-            pauseAVPlayer(reason: "iOS audio interruption began")
-            pauseYouTube(reason: "iOS audio interruption began")
-        } else {
-            let rawOptions = notification.userInfo?[AVAudioSessionInterruptionOptionKey] as? UInt ?? 0
-            let shouldResume = AVAudioSession.InterruptionOptions(rawValue: rawOptions).contains(.shouldResume)
-            print("[ROZZA NATIVE] Interruption ended shouldResume=\(shouldResume) resumeAV=\(resumeAVAfterInterruption) resumeYouTube=\(resumeYouTubeAfterInterruption)")
-            // Cleared before any resume is attempted, so a hiccup on resume is
-            // free to be classified as a genuine unexpectedForegroundPause
-            // rather than being permanently attributed to the interruption.
-            evaluateYouTube("if(window.ROZZANativeControls) window.ROZZANativeControls.interruptionEnded();")
-            do { try ROZZAAudioSession.shared.reactivateAfterInterruption() }
-            catch { lastError = "Audio session reactivation failed: \(error.localizedDescription)" }
-            guard shouldResume else { return }
+            resumeYouTubeAfterInterruption = youtubeWantsPlayback && !hardUserPauseActive
+
             if resumeAVAfterInterruption {
-                avPlayer.play()
+                pauseAVPlayer(reason: "iOS audio interruption began")
             }
-            // Only restore YouTube if it was genuinely playing before the
-            // interruption — never as an unconditional force-resume.
-            if resumeYouTubeAfterInterruption {
-                playYouTube()
+
+            // Critical: never call window.player.pauseVideo() here. That facade
+            // intentionally means explicit/user Pause. Suspend transport while
+            // preserving YT.wantPlay so a real interruption can resume later.
+            if activePlaybackSource == "youtube" {
+                evaluateYouTube("if(window.ROZZANativeControls && window.ROZZANativeControls.suspendForInterruption) window.ROZZANativeControls.suspendForInterruption();")
             }
+            return
         }
+
+        // An `.ended` can arrive after a startup handoff that we deliberately
+        // ignored. Do not manufacture a recovery cycle for something we never
+        // classified as a genuine interruption.
+        guard genuineInterruptionActive else {
+            print("[ROZZA NATIVE] Ignored interruption ended with no genuine interruption active")
+            return
+        }
+        genuineInterruptionActive = false
+
+        let rawOptions = notification.userInfo?[AVAudioSessionInterruptionOptionKey] as? UInt ?? 0
+        let shouldResume = AVAudioSession.InterruptionOptions(rawValue: rawOptions).contains(.shouldResume)
+        print("[ROZZA NATIVE] Genuine interruption ended shouldResume=\(shouldResume) resumeAV=\(resumeAVAfterInterruption) resumeYouTube=\(resumeYouTubeAfterInterruption)")
+        evaluateYouTube("if(window.ROZZANativeControls) window.ROZZANativeControls.interruptionEnded();")
+
+        if resumeAVAfterInterruption {
+            do { try ROZZAAudioSession.shared.reactivateNativePlaybackAfterInterruption() }
+            catch { lastError = "Native audio reactivation failed: \(error.localizedDescription)" }
+            if shouldResume { avPlayer.play() }
+        }
+
+        // Preserve explicit user intent. A real interruption ending is a
+        // transport resume, not a fresh human Play command.
+        if shouldResume && resumeYouTubeAfterInterruption && youtubeWantsPlayback && !hardUserPauseActive {
+            evaluateYouTube("if(window.ROZZANativeControls && window.ROZZANativeControls.resumeAfterInterruption) window.ROZZANativeControls.resumeAfterInterruption();")
+        }
+        resumeAVAfterInterruption = false
+        resumeYouTubeAfterInterruption = false
     }
 
     private func handleSilenceHint(_ notification: Notification) {
@@ -782,6 +861,9 @@ final class DJPlaybackController: NSObject, ObservableObject {
     }
 
     private func configureRemoteCommands() {
+        // Make ROZZA an explicit receiver for accessory / vehicle transport
+        // events. MPRemoteCommandCenter remains the single command owner.
+        UIApplication.shared.beginReceivingRemoteControlEvents()
         let center = MPRemoteCommandCenter.shared()
 
         // Own the system transport surface exclusively. Removing old targets

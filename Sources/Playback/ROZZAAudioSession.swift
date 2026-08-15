@@ -2,68 +2,67 @@ import AVFoundation
 import Foundation
 
 /// The single owner of ROZZA's process-wide AVAudioSession configuration.
-/// Category and mode are set at most once; callers may request reactivation
-/// after an interruption without changing the configuration.
+///
+/// Important Build 31 rule:
+/// - WebKit/YouTube/HTMLAudio owns its own media playback transport.
+/// - Native AVPlayer owns native playback only.
+///
+/// The app still configures the process category as `.playback`, but it does
+/// not repeatedly force `setActive(true)` just because a YouTube frame starts.
+/// Doing that created a self-interruption loop on real devices: WebKit began
+/// media playback, AVAudioSession posted `.began`, and the old interruption
+/// handler then paused YouTube as though the user had requested Pause.
 @MainActor
 final class ROZZAAudioSession {
     static let shared = ROZZAAudioSession()
 
     private var configured = false
-    private var active = false
+    private var nativePlaybackActive = false
 
     private init() {}
 
-    func configureAndActivateIfNeeded() throws {
+    /// Configure category/mode once, without forcing activation. This is the
+    /// correct path for WKWebView YouTube and HTMLAudio playback.
+    func configureCategoryIfNeeded() throws {
+        guard !configured else { return }
         let session = AVAudioSession.sharedInstance()
-
-        if !configured {
-            print("[ROZZA AudioSession] CALL setCategory(category: playback, mode: default, options: [])")
-            do {
-                // The playback category already supports Bluetooth A2DP and
-                // AirPlay routing. Passing record-oriented Bluetooth options
-                // here can produce an incompatible-category OSStatus error.
-                try session.setCategory(.playback, mode: .default, options: [])
-                configured = true
-                print("[ROZZA AudioSession] OK setCategory (.playback)")
-            } catch {
-                logFailure(api: "setCategory(.playback, mode: .default, options: [])", error: error)
-                throw error
-            }
-        } else {
-            print("[ROZZA AudioSession] SKIP setCategory — already configured once")
+        print("[ROZZA AudioSession] CALL setCategory(category: playback, mode: default, options: [])")
+        do {
+            try session.setCategory(.playback, mode: .default, options: [])
+            configured = true
+            print("[ROZZA AudioSession] OK setCategory (.playback) — activation delegated to active media owner")
+        } catch {
+            logFailure(api: "setCategory(.playback, mode: .default, options: [])", error: error)
+            throw error
         }
-
-        if !active {
-            print("[ROZZA AudioSession] CALL setActive(true), options: [] / rawValue: 0")
-            do {
-                try session.setActive(true, options: [])
-                active = true
-                // SilentAudioPlayer.shared.play() removed from this path.
-                // A near-silent infinite AVAudioPlayer loop was started on
-                // every session activation, including for YouTube — but real
-                // audio sources (AVPlayer, local files) generate real audio
-                // and need no keepalive, and YouTube's embed is foreground-
-                // only for now, so nothing in the current playback path needs
-                // a second audio player running underneath it. If background
-                // YouTube is tackled later and something like this proves
-                // genuinely necessary, reintroduce it deliberately then, not
-                // as a leftover from an earlier workaround attempt.
-                print("[ROZZA AudioSession] OK setActive(true)")
-            } catch {
-                logFailure(api: "setActive(true, options: [])", error: error)
-                throw error
-            }
-        }
-
-        printDiagnostics(prefix: "activated")
     }
 
-    /// Interruption end may require activation again, but never reconfigures
-    /// the category, mode, or options.
-    func markInterrupted() { active = false }
+    /// Activate only when ROZZA's native AVPlayer is the transport owner.
+    func activateForNativePlaybackIfNeeded() throws {
+        try configureCategoryIfNeeded()
+        guard !nativePlaybackActive else { return }
+        let session = AVAudioSession.sharedInstance()
+        print("[ROZZA AudioSession] CALL setActive(true) for native playback")
+        do {
+            try session.setActive(true, options: [])
+            nativePlaybackActive = true
+            print("[ROZZA AudioSession] OK setActive(true) for native playback")
+        } catch {
+            logFailure(api: "setActive(true, options: [])", error: error)
+            throw error
+        }
+    }
 
-    func reactivateAfterInterruption() throws {
-        try configureAndActivateIfNeeded()
+    /// Compatibility wrapper for native-only callers. Do not call this from
+    /// YouTube/WebKit paths.
+    func configureAndActivateIfNeeded() throws {
+        try activateForNativePlaybackIfNeeded()
+    }
+
+    func markInterrupted() { nativePlaybackActive = false }
+
+    func reactivateNativePlaybackAfterInterruption() throws {
+        try activateForNativePlaybackIfNeeded()
     }
 
     func printDiagnostics(prefix: String) {

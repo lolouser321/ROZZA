@@ -778,7 +778,7 @@ html,body{background:#050507}
             <div class="set-row"><div><div class="sl">Vehicle controls</div><div class="sd" id="vehicleControlStatus">Ready · waiting for a command</div></div><button class="text-action" id="copyVehicleDiagnosticsBtn">Copy</button></div>
             <div class="set-row"><div><div class="sl">Playback diagnostics</div><div class="sd">Copy a private technical timeline when something fails</div></div><button class="text-action" id="copyDiagnosticsBtn">Copy</button></div>
           </div>
-          <div class="ver">ROZZA 4.2.0 · CORE STABLE</div>
+          <div class="ver">ROZZA 4.2.2 · REMOTE BG STABLE</div>
         </section>
       </main>
 
@@ -1622,7 +1622,13 @@ const YT = (() => {
       UI.onTime(time, dur);
     } else if(d.event==='onStateChange'){
       const s = typeof d.info==='number' ? d.info : (d.info && d.info.playerState);
-      if(typeof s==='number'){ state=s; healthy=true; Coordinator.onYTState(s); }
+      // YouTube can emit duplicate onStateChange deliveries for the same
+      // transition. Ignore duplicates so one BUFFERING/PAUSED event cannot
+      // trigger duplicate renders, recovery attempts, or native metadata work.
+      if(typeof s==='number'){
+        healthy=true;
+        if(s!==state){ state=s; Coordinator.onYTState(s); }
+      }
     } else if(d.event==='onError'){
       const code = typeof d.info==='number' ? d.info : NaN;
       ROZZADebug.yt('ERROR('+code+') id='+currentId);
@@ -1761,6 +1767,31 @@ const YT = (() => {
       if(backgroundBridgeEnabled) setBackgroundBridge(true, true, reason);
       if(ready) cmd('playVideo',[]);
       else if(currentId && !iframe) buildIframe(currentId, true);
+      return true;
+    },
+    // One bounded self-heal for a player document that mounted but never
+    // reached PLAYING. This preserves explicit intent and never creates a new
+    // user Play command.
+    rebuildCurrent(reason='player-self-heal'){
+      const id=currentId;
+      if(!id || !wantPlay) return false;
+      ROZZADebug.yt('REBUILD PLAYER id='+id+' reason='+reason);
+      stopPoll(); clearTimeout(failT); clearTimeout(recoveryT);
+      ready=false; healthy=false; state=-1; time=0; dur=0;
+      const host=hostEl(); if(host) host.innerHTML='';
+      iframe=null;
+      buildIframe(id,true);
+      syncBackgroundIntent(true,reason);
+      poll();
+      failT=setTimeout(()=>{ if(!healthy && currentId===id) Coordinator.onYTFailed('rebuild-silent'); },14000);
+      return true;
+    },
+    // Transport-only suspension for a genuine OS interruption. Unlike pause(),
+    // this MUST preserve wantPlay and must never publish a user PAUSE intent.
+    suspend(reason='system-interruption'){
+      if(!wantPlay) return false;
+      ROZZADebug.yt('CMD SUSPEND reason='+reason+' preserveIntent=true');
+      if(ready) cmd('pauseVideo',[]);
       return true;
     },
     // `reason` distinguishes a real user/system pause from internal callers —
@@ -1926,7 +1957,7 @@ function setActiveSource(next, track){
 
 /* ---------------- COORDINATOR ---------------- */
 const Coordinator = {
-  _autoT:null, _ytT:null, _switchT:null,
+  _autoT:null, _ytT:null, _ytHardRetryT:null, _switchT:null,
   // True for a short window while a new track is loading. A PAUSED that
   // arrives while this is true is ambiguous — possibly about the track being
   // replaced — so it is never treated as an unexpected-foreground pause.
@@ -1941,7 +1972,7 @@ const Coordinator = {
     Q.idx = i; current = it; it.unavailable = false;
     SessionState.onTrack(it); rememberPlayed(it);
     setNeedsTap(false);
-    clearTimeout(this._autoT); clearTimeout(this._ytT); clearTimeout(this._switchT);
+    clearTimeout(this._autoT); clearTimeout(this._ytT); clearTimeout(this._ytHardRetryT); clearTimeout(this._switchT);
     this.isSwitchingTrack = true;
     this._switchT = setTimeout(()=>{ this.isSwitchingTrack = false; }, 1500);
     if(it.source==='youtube'){
@@ -1958,25 +1989,25 @@ const Coordinator = {
       activateNativeAudioSession();
       YT.load(it.videoId || it.id, autoplay);
       if(autoplay){
-        // A single persistent YouTube iframe is reused across tracks. These
-        // bounded nudges cover CUED/UNSTARTED transitions without creating a
-        // new autoplay permission boundary for every song.
-        [220,700,1500].forEach(delay=>setTimeout(()=>{
+        // Keep startup fully automatic. First try a few transport-only nudges;
+        // if the embedded document itself is wedged, rebuild it exactly once.
+        // No "tap Play again" state is created.
+        [120,420,950,1800,3000].forEach(delay=>setTimeout(()=>{
           if(current===it && current.source==='youtube' && YT.wantPlay && !YT.playing && !current.unavailable) YT.resume('track-start-nudge-'+delay);
         }, delay));
-        this._ytT = setTimeout(()=>{
-          if(current===it && current.source==='youtube' && !YT.playing && !current.unavailable){
-            if(autoAdvance){
-              current.unavailable=true;
-              ROZZADebug.yt('AUTO-NEXT START FAILED id='+(current.videoId||current.id)+' — advancing');
-              toast('Skipping a track that could not start.','info','ROZZA');
-              this.next(true);
-            }else{
-              setNeedsTap(true);
-              toast('Tap Play once to start this YouTube session.', 'warn', 'YOUTUBE');
-            }
+        this._ytHardRetryT=setTimeout(()=>{
+          if(current===it && current.source==='youtube' && YT.wantPlay && !YT.playing && !current.unavailable){
+            YT.rebuildCurrent('automatic-start-self-heal');
           }
-        }, autoAdvance?5200:6500);
+        },4300);
+        this._ytT = setTimeout(()=>{
+          if(current===it && current.source==='youtube' && YT.wantPlay && !YT.playing && !current.unavailable){
+            current.unavailable=true;
+            ROZZADebug.yt('START FAILED id='+(current.videoId||current.id)+' — trying next automatically');
+            toast('This track could not start — trying the next one.','info','ROZZA');
+            this.next(true);
+          }
+        },11000);
       }
     } else {
       setActiveSource('audio', it);
@@ -1991,7 +2022,7 @@ const Coordinator = {
     if(!current || Q.idx<0 || Q.idx>=Q.items.length) return false;
     const it=current;
     ROZZADebug.player('RESTORE ENGINE source='+it.source+' autoplay='+!!autoplay+' index='+Q.idx);
-    clearTimeout(this._autoT); clearTimeout(this._ytT); clearTimeout(this._switchT);
+    clearTimeout(this._autoT); clearTimeout(this._ytT); clearTimeout(this._ytHardRetryT); clearTimeout(this._switchT);
     this.isSwitchingTrack=true;
     this._switchT=setTimeout(()=>{ this.isSwitchingTrack=false; },900);
     if(it.source==='youtube'){
@@ -2101,6 +2132,7 @@ const Coordinator = {
       const neverConfirmedPlayingThisLoad = !YT.lastPlayingAt;
       const withinStartupWindow = (Date.now() - YT.lastPlayRequestAt) < YT_STARTUP_WINDOW_MS;
       const startupEligible = YT.wantPlay && neverConfirmedPlayingThisLoad && withinStartupWindow
+        && !ROZZAInterruptionActive
         && YT.startupRecoveryCount < YT_MAX_STARTUP_RECOVERIES;
 
       if(startupEligible){
@@ -2177,7 +2209,7 @@ const RemoteDiagnostics={
   },
   snapshot(){
     const st=PlaybackState.get();
-    return {version:'4.2.0',build:30,nativeShell:IS_NATIVE_SHELL,last:this.last,queueIndex:Q.idx,queueCount:Q.items.length,current:current?{id:trackKey(current),title:current.title,source:current.source}:null,playback:st,youtube:{state:YT.state,wantPlay:YT.wantPlay,playing:YT.playing,mounted:YT.mounted,videoId:YT.videoId},foreground:ROZZAAppForeground};
+    return {version:'4.2.2',build:32,nativeShell:IS_NATIVE_SHELL,last:this.last,queueIndex:Q.idx,queueCount:Q.items.length,current:current?{id:trackKey(current),title:current.title,source:current.source}:null,playback:st,youtube:{state:YT.state,wantPlay:YT.wantPlay,playing:YT.playing,mounted:YT.mounted,videoId:YT.videoId},foreground:ROZZAAppForeground};
   }
 };
 window.ROZZARemoteDiagnostics=RemoteDiagnostics;
@@ -2218,7 +2250,6 @@ window.ROZZANativeControls = {
     action=String(action||'');
     if(nonce!=null && this._lastRemoteNonce===nonce) return this._lastRemoteResult;
     ROZZADebug.native('remote command='+action+(value!=null?' value='+value:''));
-    activateNativeAudioSession();
     let result={ok:false,action};
     if(action==='play') result=this.play();
     else if(action==='pause'||action==='stop') result=this.pause();
@@ -2261,9 +2292,21 @@ window.ROZZANativeControls = {
     if(nonce!=null){ this._lastRemoteNonce=nonce; this._lastRemoteResult=finalResult; }
     return finalResult;
   },
+  suspendForInterruption(){
+    if(!current || current.source!=='youtube') return {ok:false,reason:'not-youtube'};
+    const preservedIntent=!!YT.wantPlay;
+    ROZZADebug.native('transport suspend for genuine interruption preservedIntent='+preservedIntent);
+    YT.suspend('native-genuine-interruption');
+    return {ok:true,wantsPlayback:preservedIntent,state:YT.state};
+  },
+  resumeAfterInterruption(){
+    if(!current || current.source!=='youtube' || !YT.wantPlay) return {ok:false,reason:'no-play-intent'};
+    ROZZADebug.native('transport resume after genuine interruption');
+    const requested=YT.resume('native-interruption-ended');
+    return {ok:!!requested,wantsPlayback:!!YT.wantPlay,state:YT.state};
+  },
   backgroundPrepare(){
     ROZZAAppForeground = false;
-    activateNativeAudioSession();
     const shouldResume=!!(current && current.source==='youtube' && YT.wantPlay);
     if(current && current.source==='youtube'){
       YT.syncBackgroundIntent(YT.wantPlay, 'willResignActive');
@@ -2274,7 +2317,6 @@ window.ROZZANativeControls = {
   },
   background(){
     ROZZAAppForeground = false;
-    activateNativeAudioSession();
     if(current && current.source==='youtube'){
       const shouldResume = YT.wantPlay;
       YT.syncBackgroundIntent(shouldResume, 'didEnterBackground');
@@ -2293,7 +2335,6 @@ window.ROZZANativeControls = {
       ROZZADebug.yt('BACKGROUND RESUME SKIP reason='+reason+' foreground='+ROZZAAppForeground+' wantPlay='+YT.wantPlay);
       return { requested:false, foreground:ROZZAAppForeground, wantPlay:YT.wantPlay, state:YT.state };
     }
-    activateNativeAudioSession();
     YT.syncBackgroundIntent(true, reason);
     YT.setBackgroundBridge(true, true, reason);
     // Always pulse the iframe-side <video> bridge. The outer YouTube widget
@@ -2799,8 +2840,12 @@ let _lastNativePositionPush=0;
 let _lastMediaPositionPush=0;
 const UI = {
   _playing:false,
+  _playTrackKey:'',
   onPlayState(playing){
-    this._playing=playing;
+    playing=!!playing;
+    const playTrackKey=current?trackKey(current):'';
+    if(this._playing===playing && this._playTrackKey===playTrackKey) return;
+    this._playing=playing; this._playTrackKey=playTrackKey;
     const app=$('#app'); if(app) app.classList.toggle('live-playing',!!playing);
     $$('.vinyl.spin').forEach(v=>v.classList.toggle('on',playing));
     $$('.tonearm').forEach(t=>t.classList.toggle('on',playing));
@@ -3308,7 +3353,7 @@ function wire(){
   $('#clrMirrors').onclick=()=>{ store.del('mirrors'); loadPool(); warmup(); toast('Mirror cache reset','ok','DATA'); };
   $('#queueClear').onclick=()=>{ clearQueue(); toast('Queue cleared','ok','QUEUE'); };
   const copyVehicleDiag=$('#copyVehicleDiagnosticsBtn'); if(copyVehicleDiag) copyVehicleDiag.onclick=async()=>{ const payload=JSON.stringify(RemoteDiagnostics.snapshot(),null,2); try{await navigator.clipboard.writeText(payload);toast('Vehicle diagnostics copied','ok','DRIVE REMOTE');}catch(e){toast('Could not access clipboard','warn','DRIVE REMOTE');} };
-  const copyDiag=$('#copyDiagnosticsBtn'); if(copyDiag) copyDiag.onclick=async()=>{ const payload='ROZZA 4.2.0 CORE STABLE\n'+JSON.stringify(ROZZADebug.getState(),null,2)+'\n\n'+ROZZADebug.getLog(); try{await navigator.clipboard.writeText(payload);toast('Diagnostics copied','ok','SUPPORT');}catch(e){toast('Could not access clipboard','warn','SUPPORT');} };
+  const copyDiag=$('#copyDiagnosticsBtn'); if(copyDiag) copyDiag.onclick=async()=>{ const payload='ROZZA 4.2.2 REMOTE BG STABLE\n'+JSON.stringify(ROZZADebug.getState(),null,2)+'\n\n'+ROZZADebug.getLog(); try{await navigator.clipboard.writeText(payload);toast('Diagnostics copied','ok','SUPPORT');}catch(e){toast('Could not access clipboard','warn','SUPPORT');} };
   const netRetry=$('#networkRetry'); if(netRetry) netRetry.onclick=()=>{ refreshRegistries().then(()=>warmup()); };
   window.addEventListener('offline',()=>{ const b=$('#networkBanner');if(b)b.classList.add('show');setConn('quiet'); });
   window.addEventListener('online',()=>{ const b=$('#networkBanner');if(b)b.classList.remove('show');refreshRegistries().then(()=>warmup());toast('Back online','ok','CONNECTION'); });
