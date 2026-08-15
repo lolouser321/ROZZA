@@ -778,7 +778,7 @@ html,body{background:#050507}
             <div class="set-row"><div><div class="sl">Vehicle controls</div><div class="sd" id="vehicleControlStatus">Ready · waiting for a command</div></div><button class="text-action" id="copyVehicleDiagnosticsBtn">Copy</button></div>
             <div class="set-row"><div><div class="sl">Playback diagnostics</div><div class="sd">Copy a private technical timeline when something fails</div></div><button class="text-action" id="copyDiagnosticsBtn">Copy</button></div>
           </div>
-          <div class="ver">ROZZA 4.2.2 · REMOTE BG STABLE</div>
+          <div class="ver">ROZZA 4.2.3 · REMOTE PAUSE STABLE</div>
         </section>
       </main>
 
@@ -2209,7 +2209,7 @@ const RemoteDiagnostics={
   },
   snapshot(){
     const st=PlaybackState.get();
-    return {version:'4.2.2',build:32,nativeShell:IS_NATIVE_SHELL,last:this.last,queueIndex:Q.idx,queueCount:Q.items.length,current:current?{id:trackKey(current),title:current.title,source:current.source}:null,playback:st,youtube:{state:YT.state,wantPlay:YT.wantPlay,playing:YT.playing,mounted:YT.mounted,videoId:YT.videoId},foreground:ROZZAAppForeground};
+    return {version:'4.2.3',build:33,nativeShell:IS_NATIVE_SHELL,last:this.last,queueIndex:Q.idx,queueCount:Q.items.length,current:current?{id:trackKey(current),title:current.title,source:current.source}:null,playback:st,youtube:{state:YT.state,wantPlay:YT.wantPlay,playing:YT.playing,mounted:YT.mounted,videoId:YT.videoId},foreground:ROZZAAppForeground};
   }
 };
 window.ROZZARemoteDiagnostics=RemoteDiagnostics;
@@ -2275,7 +2275,7 @@ window.ROZZANativeControls = {
       [60,240,700].forEach(delay=>setTimeout(()=>{
         if(!ROZZAAppForeground && current && current.source==='youtube' && YT.wantPlay){
           YT.pulseBackgroundBridge(remoteReason+'-'+delay);
-          if(YT.state!==1) YT.play();
+          if(YT.state!==1) YT.resume(remoteReason+'-'+delay);
         }
       },delay));
     }
@@ -2367,6 +2367,11 @@ window.ROZZANativeControls = {
   // Bridged from DJPlaybackController.handleInterruption. While a real
   // AVAudioSession interruption (phone call, Siri, another app) is active,
   // a PAUSED report is never "unexpected" — recovery must not fight it.
+  clearInterruptionFlag(reason='native-youtube-audio-owner'){
+    ROZZAInterruptionActive = false;
+    ROZZADebug.native('interruption flag cleared reason='+reason);
+    return {ok:true,interruptionActive:false};
+  },
   interruptionBegan(){
     ROZZAInterruptionActive = true;
     if(current && current.source==='youtube' && YT.backgroundBridgeEnabled){
@@ -3353,7 +3358,7 @@ function wire(){
   $('#clrMirrors').onclick=()=>{ store.del('mirrors'); loadPool(); warmup(); toast('Mirror cache reset','ok','DATA'); };
   $('#queueClear').onclick=()=>{ clearQueue(); toast('Queue cleared','ok','QUEUE'); };
   const copyVehicleDiag=$('#copyVehicleDiagnosticsBtn'); if(copyVehicleDiag) copyVehicleDiag.onclick=async()=>{ const payload=JSON.stringify(RemoteDiagnostics.snapshot(),null,2); try{await navigator.clipboard.writeText(payload);toast('Vehicle diagnostics copied','ok','DRIVE REMOTE');}catch(e){toast('Could not access clipboard','warn','DRIVE REMOTE');} };
-  const copyDiag=$('#copyDiagnosticsBtn'); if(copyDiag) copyDiag.onclick=async()=>{ const payload='ROZZA 4.2.2 REMOTE BG STABLE\n'+JSON.stringify(ROZZADebug.getState(),null,2)+'\n\n'+ROZZADebug.getLog(); try{await navigator.clipboard.writeText(payload);toast('Diagnostics copied','ok','SUPPORT');}catch(e){toast('Could not access clipboard','warn','SUPPORT');} };
+  const copyDiag=$('#copyDiagnosticsBtn'); if(copyDiag) copyDiag.onclick=async()=>{ const payload='ROZZA 4.2.3 REMOTE PAUSE STABLE\n'+JSON.stringify(ROZZADebug.getState(),null,2)+'\n\n'+ROZZADebug.getLog(); try{await navigator.clipboard.writeText(payload);toast('Diagnostics copied','ok','SUPPORT');}catch(e){toast('Could not access clipboard','warn','SUPPORT');} };
   const netRetry=$('#networkRetry'); if(netRetry) netRetry.onclick=()=>{ refreshRegistries().then(()=>warmup()); };
   window.addEventListener('offline',()=>{ const b=$('#networkBanner');if(b)b.classList.add('show');setConn('quiet'); });
   window.addEventListener('online',()=>{ const b=$('#networkBanner');if(b)b.classList.remove('show');refreshRegistries().then(()=>warmup());toast('Back online','ok','CONNECTION'); });

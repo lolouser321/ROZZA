@@ -652,6 +652,22 @@ final class DJPlaybackController: NSObject, ObservableObject {
         let reasonRaw = (notification.userInfo?[AVAudioSessionInterruptionReasonKey] as? NSNumber)?.uintValue
         let reasonText = reasonRaw.map { String($0) } ?? "nil"
         let appState = UIApplication.shared.applicationState
+
+        // Build 33 audio-ownership rule: WebKit owns YouTube audio. AVAudioSession
+        // interruption notifications are process-level observations and on real
+        // devices WebKit can generate them during ordinary YouTube startup.
+        // Native must never suspend/pause YouTube because of this notification;
+        // WebKit/iOS will manage its own transport. Human/system media buttons
+        // still arrive through MPRemoteCommandCenter and remain authoritative.
+        if activePlaybackSource == "youtube" {
+            genuineInterruptionActive = false
+            resumeYouTubeAfterInterruption = false
+            ROZZAAudioSession.shared.markInterrupted()
+            evaluateYouTube("if(window.ROZZANativeControls && window.ROZZANativeControls.clearInterruptionFlag) window.ROZZANativeControls.clearInterruptionFlag('native-youtube-audio-owner');")
+            print("[ROZZA NATIVE] Ignored AVAudioSession interruption for WebKit-owned YouTube type=\(type.rawValue) reasonRaw=\(reasonText) appState=\(appState.rawValue)")
+            return
+        }
+
         let now = Date().timeIntervalSince1970
         let sincePlay = lastYouTubePlayIntentAt > 0 ? now - lastYouTubePlayIntentAt : TimeInterval.greatestFiniteMagnitude
 
@@ -911,21 +927,11 @@ final class DJPlaybackController: NSObject, ObservableObject {
             return .success
         }
 
-        center.skipForwardCommand.isEnabled = true
-        center.skipForwardCommand.preferredIntervals = [15]
-        center.skipForwardCommand.addTarget { [weak self] event in
-            let seconds = (event as? MPSkipIntervalCommandEvent)?.interval ?? 15
-            Task { @MainActor in self?.dispatchRemoteCommand("seekBy", value: seconds) }
-            return .success
-        }
-
-        center.skipBackwardCommand.isEnabled = true
-        center.skipBackwardCommand.preferredIntervals = [15]
-        center.skipBackwardCommand.addTarget { [weak self] event in
-            let seconds = (event as? MPSkipIntervalCommandEvent)?.interval ?? 15
-            Task { @MainActor in self?.dispatchRemoteCommand("seekBy", value: -seconds) }
-            return .success
-        }
+        // Prefer real Track Previous / Next on Lock Screen, AirPods and car
+        // head units. Enabling skipForward/skipBackward at the same time makes
+        // some system surfaces choose ±15s instead of previous/next track.
+        center.skipForwardCommand.isEnabled = false
+        center.skipBackwardCommand.isEnabled = false
 
         center.changePlaybackPositionCommand.isEnabled = true
         center.changePlaybackPositionCommand.addTarget { [weak self] event in
