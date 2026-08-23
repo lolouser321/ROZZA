@@ -76,12 +76,31 @@ test("transport and Now Playing observations never rewrite explicit intent", () 
 test("real interruptions suspend without changing play intent and resume only the same session", () => {
   assert.doesNotMatch(controller, /Ignored AVAudioSession interruption for WebKit-owned YouTube/);
   assert.match(controller, /playbackControlPhase = \.systemInterrupted/);
-  assert.match(controller, /resumeYouTubeAfterInterruption = youtubeWantsPlayback && !hardUserPauseActive/);
+  assert.match(controller, /resumeYouTubeAfterInterruption = isYouTube && youtubeWantsPlayback && !hardUserPauseActive/);
   assert.match(controller, /interruptedPlaybackSessionID == activePlaybackSessionID/);
   assert.match(controller, /shouldResume && resumeYouTubeAfterInterruption && youtubeWantsPlayback && !hardUserPauseActive && sameSession/);
   assert.match(controller, /setAllMediaPlaybackSuspended\(false\)/);
   assert.match(player, /suspend\(reason='system-interruption'\)[\s\S]*?if\(!wantPlay\) return false;[\s\S]*?cmd\('pauseVideo'/);
   assert.match(player, /deferPlay\(reason='play-during-interruption'\)/);
+});
+
+test("YouTube startup handoffs are classified by transport state, never a timeout", () => {
+  assert.match(controller, /playbackControlPhase = genuineInterruptionActive \? \.systemInterrupted : \.resuming/);
+  assert.match(controller, /youtubeStartupHandoff[\s\S]*?playbackControlPhase == \.resuming/);
+  assert.match(controller, /youtubeLifecycleDeactivation/);
+  assert.match(controller, /AVAudioSessionInterruptionWasSuspendedKey/);
+  assert.doesNotMatch(controller, /sincePlay\s*</);
+  assert.doesNotMatch(controller, /likelyWebKitStartupHandoff/);
+  assert.match(controller, /\[ROZZA INTERRUPT\] IGNORED_YOUTUBE_STARTUP/);
+});
+
+test("genuine interruption diagnostics carry intent, source, session and generations", () => {
+  for (const marker of ["BEGIN", "GENUINE_EXTERNAL", "END", "RESUME"]) {
+    assert.ok(controller.includes(`[ROZZA INTERRUPT] ${marker}`));
+  }
+  for (const field of ["source=", "foreground=", "wantPlay=", "humanPauseActive=", "videoID=", "session=", "bgGeneration=", "remoteGeneration="]) {
+    assert.ok(controller.includes(field), `missing interruption diagnostic field ${field}`);
+  }
 });
 
 test("all automatic recovery paths are fenced during an interruption", () => {

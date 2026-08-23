@@ -93,7 +93,11 @@ if 'init() { configureRemoteCommands(); restore() }' in legacy: errors.append('l
 if 'Ignored AVAudioSession interruption for WebKit-owned YouTube' in dj: errors.append('real YouTube phone/Siri interruptions are still ignored')
 if 'registerExplicitPlaybackIntent(shouldPlay: true, reason: "main-player-' not in dj: errors.append('main-player explicit play intent registration missing')
 if 'pauseYouTube(reason: "iOS audio interruption began")' in dj: errors.append('OS interruption still mutates explicit YouTube pause intent')
-if 'likelyWebKitStartupHandoff' not in dj: errors.append('narrow WebKit startup-handoff filter missing')
+if 'youtubeStartupHandoff' not in dj or 'playbackControlPhase == .resuming' not in dj: errors.append('state-based WebKit startup-handoff classifier missing')
+if 'sincePlay <' in dj or 'likelyWebKitStartupHandoff' in dj: errors.append('interruption classification still relies on a fragile startup time window')
+if 'AVAudioSessionInterruptionWasSuspendedKey' not in dj or '.sceneWasBackgrounded' not in dj: errors.append('documented lifecycle interruption classification missing')
+for marker in ['[ROZZA INTERRUPT] BEGIN','[ROZZA INTERRUPT] IGNORED_YOUTUBE_STARTUP','[ROZZA INTERRUPT] GENUINE_EXTERNAL','[ROZZA INTERRUPT] END','[ROZZA INTERRUPT] RESUME']:
+    if marker not in dj: errors.append('interruption diagnostic marker missing: '+marker)
 if 'interruptedPlaybackSessionID == activePlaybackSessionID' not in dj: errors.append('interruption resume is not fenced to the same playback session')
 if 'suspendForInterruption' not in dj or 'resumeAfterInterruption' not in dj: errors.append('real YouTube interruption suspend/resume path missing')
 if 'setAllMediaPlaybackSuspended(true)' not in dj or 'setAllMediaPlaybackSuspended(false)' not in dj: errors.append('native WebKit hard suspend/resume fence missing')
@@ -104,7 +108,7 @@ if "action == \"play\" {" not in dj: errors.append('remote recovery is not limit
 if 'backgroundRecoveryConfirmed' not in html or '_backgroundRecoverySuccessAt' not in html: errors.append('JS background success cancellation/cooldown missing')
 if 'commandID:nonce' not in html or 'beforeIndex' not in html or 'afterIndex:Q.idx' not in html or 'rejectionReason:' not in html: errors.append('remote command diagnostics are incomplete')
 proj=(root/'project.yml').read_text()
-for token in ['MARKETING_VERSION: 4.2.3','CURRENT_PROJECT_VERSION: 35','Resources/yt_background_bridge.js','path: rozza2.html']:
+for token in ['MARKETING_VERSION: 4.2.3','CURRENT_PROJECT_VERSION: 36','Resources/yt_background_bridge.js','path: rozza2.html']:
     if token not in proj: errors.append('project.yml missing: '+token)
 workflow=(root/'.github/workflows/ios-ipa.yml').read_text()
 if 'working-directory: ios' in workflow or 'path: ios/ROZZA-unsigned.ipa' in workflow: errors.append('GitHub workflow still builds obsolete ios subproject')

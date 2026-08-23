@@ -79,9 +79,9 @@ check "CFBundleDisplayName" test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleD
 check "CFBundleIconName" test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIconName' "$APP_PATH/Info.plist")" = "AppIcon"
 check "UIBackgroundModes[0]" test "$(/usr/libexec/PlistBuddy -c 'Print :UIBackgroundModes:0' "$APP_PATH/Info.plist")" = "audio"
 check "CFBundleShortVersionString == 4.2.3" test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP_PATH/Info.plist")" = "4.2.3"
-check "CFBundleVersion == 35" test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP_PATH/Info.plist")" = "35"
+check "CFBundleVersion == 36" test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP_PATH/Info.plist")" = "36"
 
-# Build 35 remote/background stability guard: make sure Xcode packaged the
+# Build 36 remote/background stability guard: make sure Xcode packaged the
 # boot-time engine restore, Drive Mode, HD artwork, hard human-pause fence,
 # plus the real phone/Siri interruption state machine instead of a stale HTML
 # or Swift build.
@@ -144,7 +144,9 @@ check_absent "manual second-Play fallback removed" "Tap Play once to start this 
 strings "$APP_PATH/ROZZA" > "$WORK_DIR/rozza-binary-strings.txt" || true
 check "compiled binary contains background-capture log line" grep -q "Background capture wantsPlayback=" "$WORK_DIR/rozza-binary-strings.txt"
 check "compiled binary contains native pause-fence reason string" grep -q "native-human-pause-fence" "$WORK_DIR/rozza-binary-strings.txt"
-check "compiled binary contains genuine-interruption log line" grep -q "Genuine interruption began" "$WORK_DIR/rozza-binary-strings.txt"
+check "compiled binary contains interruption begin log line" grep -q "\[ROZZA INTERRUPT\] BEGIN" "$WORK_DIR/rozza-binary-strings.txt"
+check "compiled binary contains startup-ignore log line" grep -q "\[ROZZA INTERRUPT\] IGNORED_YOUTUBE_STARTUP" "$WORK_DIR/rozza-binary-strings.txt"
+check "compiled binary contains genuine-interruption log line" grep -q "\[ROZZA INTERRUPT\] GENUINE_EXTERNAL" "$WORK_DIR/rozza-binary-strings.txt"
 check_absent "compiled binary does not ignore every YouTube interruption" "Ignored AVAudioSession interruption for WebKit-owned YouTube" "$WORK_DIR/rozza-binary-strings.txt"
 
 ditto "$APP_PATH" "$WORK_DIR/Payload/ROZZA.app"

@@ -2230,7 +2230,7 @@ const RemoteDiagnostics={
   },
   snapshot(){
     const st=PlaybackState.get();
-    return {version:'4.2.3',build:35,nativeShell:IS_NATIVE_SHELL,last:this.last,queueIndex:Q.idx,queueCount:Q.items.length,current:current?{id:trackKey(current),title:current.title,source:current.source}:null,playback:st,youtube:{state:YT.state,wantPlay:YT.wantPlay,humanPauseActive:!YT.wantPlay,playing:YT.playing,mounted:YT.mounted,videoId:YT.videoId},foreground:ROZZAAppForeground,systemInterrupted:ROZZAInterruptionActive};
+    return {version:'4.2.3',build:36,nativeShell:IS_NATIVE_SHELL,last:this.last,queueIndex:Q.idx,queueCount:Q.items.length,current:current?{id:trackKey(current),title:current.title,source:current.source}:null,playback:st,youtube:{state:YT.state,wantPlay:YT.wantPlay,humanPauseActive:!YT.wantPlay,playing:YT.playing,mounted:YT.mounted,videoId:YT.videoId},foreground:ROZZAAppForeground,systemInterrupted:ROZZAInterruptionActive};
   }
 };
 window.ROZZARemoteDiagnostics=RemoteDiagnostics;
