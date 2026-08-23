@@ -42,3 +42,5 @@ next-env.d.ts
 /work/
 
 # generated iOS build output
+/build/
+__pycache__/

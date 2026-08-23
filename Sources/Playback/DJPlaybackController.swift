@@ -5,6 +5,14 @@ import MediaPlayer
 import UIKit
 import WebKit
 
+private enum PlaybackControlPhase: String {
+    case playing = "PLAYING"
+    case userPaused = "USER_PAUSED"
+    case systemInterrupted = "SYSTEM_INTERRUPTED"
+    case backgroundSuspended = "BACKGROUND_SUSPENDED"
+    case resuming = "RESUMING"
+}
+
 @MainActor
 final class DJPlaybackController: NSObject, ObservableObject {
     @Published var isPresented = false
@@ -45,6 +53,9 @@ final class DJPlaybackController: NSObject, ObservableObject {
     private var lastNowPlayingTrackID: String?
     private var lastYouTubePlayIntentAt: TimeInterval = 0
     private var genuineInterruptionActive = false
+    private var playbackControlPhase: PlaybackControlPhase = .userPaused
+    private var interruptedPlaybackSessionID: String?
+    private var activePlaybackSessionID: String?
     private var ignoredStartupInterruptionCount = 0
     private var statusTimer: Timer?
     private var observers: [NSObjectProtocol] = []
@@ -99,6 +110,7 @@ final class DJPlaybackController: NSObject, ObservableObject {
             } else {
                 _ = configureAudioSession()
                 isYouTubePlaying = true
+                if youtubeWantsPlayback && !genuineInterruptionActive { playbackControlPhase = .playing }
                 updateNativePlaybackState(isPlaying: true, payload: payload)
             }
         case "VideoPause":
@@ -174,15 +186,10 @@ final class DJPlaybackController: NSObject, ObservableObject {
         let reason = payload["reason"] as? String ?? "main-player"
         activePlaybackSource = "youtube"
         if shouldPlay {
-            youtubeWantsPlayback = true
-            hardUserPauseActive = false
+            registerExplicitPlaybackIntent(shouldPlay: true, reason: "main-player-\(reason)")
             if let at = payload["at"] as? NSNumber {
                 lastYouTubePlayIntentAt = at.doubleValue / 1000.0
-            } else {
-                lastYouTubePlayIntentAt = Date().timeIntervalSince1970
             }
-            _ = configureAudioSession()
-            print("[ROZZA INTENT] main-player PLAY reason=\(reason)")
         } else {
             registerExplicitPlaybackIntent(shouldPlay: false, reason: "main-player-\(reason)")
         }
@@ -408,17 +415,27 @@ final class DJPlaybackController: NSObject, ObservableObject {
         youtubeWantsPlayback = shouldPlay
         if shouldPlay {
             hardUserPauseActive = false
+            playbackControlPhase = genuineInterruptionActive ? .systemInterrupted : .playing
+            if genuineInterruptionActive {
+                resumeYouTubeAfterInterruption = true
+                if interruptedPlaybackSessionID == nil {
+                    interruptedPlaybackSessionID = activePlaybackSessionID
+                }
+            }
             lastYouTubePlayIntentAt = Date().timeIntervalSince1970
             _ = configureAudioSession()
         } else {
             // Human/system Pause is a hard fence: cancel every lifecycle resume
             // generation and interruption resume captured before the button tap.
             hardUserPauseActive = true
+            playbackControlPhase = .userPaused
             isYouTubePlaying = false
             resumeYouTubeAfterBackgroundTransition = false
             resumeYouTubeAfterInterruption = false
             backgroundResumeGeneration += 1
+            remoteCommandGeneration += 1
             endBackgroundTransitionTask()
+            endRemoteCommandTask()
             var info = MPNowPlayingInfoCenter.default().nowPlayingInfo ?? [:]
             info[MPNowPlayingInfoPropertyPlaybackRate] = 0.0
             MPNowPlayingInfoCenter.default().nowPlayingInfo = info
@@ -437,6 +454,7 @@ final class DJPlaybackController: NSObject, ObservableObject {
     /// acknowledgement. A failed/delayed evaluateJavaScript gets only two
     /// bounded retries; commands are never turned into a permanent polling loop.
     private func dispatchRemoteCommand(_ action: String, value: Double? = nil, shouldPlay: Bool? = nil) {
+        let requestedAction = action
         var resolvedAction = action
         var resolvedShouldPlay = shouldPlay
         // Some cars/accessories send only togglePlayPauseCommand. Resolve that
@@ -446,16 +464,29 @@ final class DJPlaybackController: NSObject, ObservableObject {
             resolvedAction = shouldPause ? "pause" : "play"
             resolvedShouldPlay = !shouldPause
         }
-        remoteCommandGeneration += 1
-        let generation = remoteCommandGeneration
         // Keep the process declared as a playback app for Lock Screen / vehicle
         // routing, but never force native AVAudioSession activation for YouTube.
         _ = configureAudioSession()
         if let resolvedShouldPlay {
             registerExplicitPlaybackIntent(shouldPlay: resolvedShouldPlay, reason: "remote-\(resolvedAction)")
         }
+        remoteCommandGeneration += 1
+        let generation = remoteCommandGeneration
+        let nowPlaying = MPNowPlayingInfoCenter.default().nowPlayingInfo ?? [:]
+        let beforeIndex = (nowPlaying[MPNowPlayingInfoPropertyPlaybackQueueIndex] as? NSNumber)?.intValue ?? -1
+        let beforeVideoID = activePlaybackSessionID ?? "none"
+        let label = requestedAction.uppercased()
+        print("[ROZZA REMOTE] \(label) received beforeIndex=\(beforeIndex) videoID=\(beforeVideoID) wantPlay=\(youtubeWantsPlayback) phase=\(playbackControlPhase.rawValue)")
         beginRemoteCommandTask()
-        performRemoteCommand(resolvedAction, value: value, generation: generation, attempt: 0)
+        performRemoteCommand(
+            resolvedAction,
+            value: value,
+            generation: generation,
+            attempt: 0,
+            beforeIndex: beforeIndex,
+            beforeVideoID: beforeVideoID,
+            logAction: requestedAction
+        )
         if resolvedShouldPlay == false && activePlaybackSource == "youtube" {
             // Guard against a delayed lifecycle recovery that was already queued
             // before the human pressed Pause. Each check aborts instantly if the
@@ -474,7 +505,15 @@ final class DJPlaybackController: NSObject, ObservableObject {
         }
     }
 
-    private func performRemoteCommand(_ action: String, value: Double?, generation: Int, attempt: Int) {
+    private func performRemoteCommand(
+        _ action: String,
+        value: Double?,
+        generation: Int,
+        attempt: Int,
+        beforeIndex: Int,
+        beforeVideoID: String,
+        logAction: String
+    ) {
         guard generation == remoteCommandGeneration else { return }
         let jsValue = value.map { String(format: "%.3f", $0) } ?? "null"
         evaluateYouTube("""
@@ -495,11 +534,21 @@ final class DJPlaybackController: NSObject, ObservableObject {
             if let wantsPlayback = ack?["wantsPlayback"] as? Bool {
                 self.youtubeWantsPlayback = wantsPlayback
             }
-            print("[ROZZA REMOTE] action=\(action) attempt=\(attempt + 1) ok=\(ok) result=", ack ?? [:], "error=", error?.localizedDescription ?? "none")
+            let afterIndex = (ack?["index"] as? NSNumber)?.intValue ?? beforeIndex
+            let afterVideoID = (ack?["trackID"] as? String) ?? self.activePlaybackSessionID ?? "none"
+            print("[ROZZA REMOTE] \(logAction.uppercased()) accepted=\(ok) resolved=\(action) beforeIndex=\(beforeIndex) afterIndex=\(afterIndex) videoID=\(afterVideoID) previousVideoID=\(beforeVideoID) wantPlay=\(self.youtubeWantsPlayback) phase=\(self.playbackControlPhase.rawValue) attempt=\(attempt + 1) error=\(error?.localizedDescription ?? "none")")
             if !ok && attempt < 2 {
                 let delay = attempt == 0 ? 0.12 : 0.38
                 DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
-                    self?.performRemoteCommand(action, value: value, generation: generation, attempt: attempt + 1)
+                    self?.performRemoteCommand(
+                        action,
+                        value: value,
+                        generation: generation,
+                        attempt: attempt + 1,
+                        beforeIndex: beforeIndex,
+                        beforeVideoID: beforeVideoID,
+                        logAction: logAction
+                    )
                 }
                 return
             }
@@ -511,10 +560,16 @@ final class DJPlaybackController: NSObject, ObservableObject {
             if ok,
                UIApplication.shared.applicationState != .active,
                self.youtubeWantsPlayback,
+               !self.hardUserPauseActive,
+               !self.genuineInterruptionActive,
                action == "play" || action == "toggle" || action == "next" || action == "previous" || action == "dislike" {
                 [0.08, 0.30, 0.82].forEach { delay in
                     DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
-                        guard let self, generation == self.remoteCommandGeneration, self.youtubeWantsPlayback else { return }
+                        guard let self,
+                              generation == self.remoteCommandGeneration,
+                              self.youtubeWantsPlayback,
+                              !self.hardUserPauseActive,
+                              !self.genuineInterruptionActive else { return }
                         _ = self.configureAudioSession()
                         self.evaluateYouTube("if(window.ROZZANativeControls) window.ROZZANativeControls.backgroundResumeIfWanted('remote-native-\(action)');")
                     }
@@ -533,7 +588,10 @@ final class DJPlaybackController: NSObject, ObservableObject {
             DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
                 guard let self,
                       generation == self.backgroundResumeGeneration,
-                      self.resumeYouTubeAfterBackgroundTransition else { return }
+                      self.resumeYouTubeAfterBackgroundTransition,
+                      self.youtubeWantsPlayback,
+                      !self.hardUserPauseActive,
+                      !self.genuineInterruptionActive else { return }
                 self.configureAudioSession()
                 let reason = "native-background-kick-\(index + 1)"
                 self.evaluateYouTube("""
@@ -580,6 +638,9 @@ final class DJPlaybackController: NSObject, ObservableObject {
                 // prevented the automatic background resume kicks from being
                 // scheduled. Use the main player's mirrored user intent first.
                 self.resumeYouTubeAfterBackgroundTransition = self.youtubeWantsPlayback || self.isYouTubePlaying
+                if self.resumeYouTubeAfterBackgroundTransition && !self.genuineInterruptionActive {
+                    self.playbackControlPhase = .backgroundSuspended
+                }
                 print("[ROZZA NATIVE] Background capture wantsPlayback=", self.youtubeWantsPlayback, "isPlaying=", self.isYouTubePlaying, "resume=", self.resumeYouTubeAfterBackgroundTransition)
                 self.backgroundResumeGeneration += 1
                 let generation = self.backgroundResumeGeneration
@@ -615,7 +676,10 @@ final class DJPlaybackController: NSObject, ObservableObject {
                 // If willResignActive captured a playing YouTube session, make
                 // one immediate native kick too. The later bounded kicks are
                 // only transition insurance; JS user intent is checked each time.
-                if self.resumeYouTubeAfterBackgroundTransition {
+                if self.resumeYouTubeAfterBackgroundTransition &&
+                    self.youtubeWantsPlayback &&
+                    !self.hardUserPauseActive &&
+                    !self.genuineInterruptionActive {
                     self.evaluateYouTube("if(window.ROZZANativeControls) window.ROZZANativeControls.backgroundResumeIfWanted('did-enter-background');")
                 }
             }
@@ -653,21 +717,6 @@ final class DJPlaybackController: NSObject, ObservableObject {
         let reasonText = reasonRaw.map { String($0) } ?? "nil"
         let appState = UIApplication.shared.applicationState
 
-        // Build 33 audio-ownership rule: WebKit owns YouTube audio. AVAudioSession
-        // interruption notifications are process-level observations and on real
-        // devices WebKit can generate them during ordinary YouTube startup.
-        // Native must never suspend/pause YouTube because of this notification;
-        // WebKit/iOS will manage its own transport. Human/system media buttons
-        // still arrive through MPRemoteCommandCenter and remain authoritative.
-        if activePlaybackSource == "youtube" {
-            genuineInterruptionActive = false
-            resumeYouTubeAfterInterruption = false
-            ROZZAAudioSession.shared.markInterrupted()
-            evaluateYouTube("if(window.ROZZANativeControls && window.ROZZANativeControls.clearInterruptionFlag) window.ROZZANativeControls.clearInterruptionFlag('native-youtube-audio-owner');")
-            print("[ROZZA NATIVE] Ignored AVAudioSession interruption for WebKit-owned YouTube type=\(type.rawValue) reasonRaw=\(reasonText) appState=\(appState.rawValue)")
-            return
-        }
-
         let now = Date().timeIntervalSince1970
         let sincePlay = lastYouTubePlayIntentAt > 0 ? now - lastYouTubePlayIntentAt : TimeInterval.greatestFiniteMagnitude
 
@@ -696,6 +745,10 @@ final class DJPlaybackController: NSObject, ObservableObject {
             }
 
             genuineInterruptionActive = true
+            playbackControlPhase = .systemInterrupted
+            interruptedPlaybackSessionID = activePlaybackSessionID
+            resumeYouTubeAfterBackgroundTransition = false
+            backgroundResumeGeneration += 1
             print("[ROZZA NATIVE] Genuine interruption began reasonRaw=\(reasonText) appState=\(appState.rawValue)")
             evaluateYouTube("if(window.ROZZANativeControls) window.ROZZANativeControls.interruptionBegan();")
             ROZZAAudioSession.shared.markInterrupted()
@@ -737,11 +790,18 @@ final class DJPlaybackController: NSObject, ObservableObject {
 
         // Preserve explicit user intent. A real interruption ending is a
         // transport resume, not a fresh human Play command.
-        if shouldResume && resumeYouTubeAfterInterruption && youtubeWantsPlayback && !hardUserPauseActive {
+        let sameSession = interruptedPlaybackSessionID != nil && interruptedPlaybackSessionID == activePlaybackSessionID
+        if shouldResume && resumeYouTubeAfterInterruption && youtubeWantsPlayback && !hardUserPauseActive && sameSession {
+            playbackControlPhase = .resuming
             evaluateYouTube("if(window.ROZZANativeControls && window.ROZZANativeControls.resumeAfterInterruption) window.ROZZANativeControls.resumeAfterInterruption();")
+        } else if hardUserPauseActive || !youtubeWantsPlayback {
+            playbackControlPhase = .userPaused
+        } else {
+            playbackControlPhase = .backgroundSuspended
         }
         resumeAVAfterInterruption = false
         resumeYouTubeAfterInterruption = false
+        interruptedPlaybackSessionID = nil
     }
 
     private func handleSilenceHint(_ notification: Notification) {
@@ -765,9 +825,8 @@ final class DJPlaybackController: NSObject, ObservableObject {
             lastArtworkURL = nil
             lastNowPlayingTrackID = nil
             isYouTubePlaying = false
-            youtubeWantsPlayback = false
-            hardUserPauseActive = false
             activePlaybackSource = ""
+            activePlaybackSessionID = nil
             MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
             return
         }
@@ -780,6 +839,7 @@ final class DJPlaybackController: NSObject, ObservableObject {
             artworkTask = nil
             lastArtworkURL = nil
             lastNowPlayingTrackID = trackID
+            activePlaybackSessionID = trackID
             nowPlayingInfo.removeValue(forKey: MPMediaItemPropertyArtwork)
         }
         if let title = info["title"] as? String {

@@ -1756,6 +1756,17 @@ const YT = (() => {
       if(ready) cmd('playVideo',[]);
       else if(currentId && !iframe) buildIframe(currentId, true);
     },
+    // A human/system Play received while iOS owns an active interruption is
+    // still explicit PLAY intent, but it must not start the transport until
+    // the interruption ends with shouldResume.
+    deferPlay(reason='play-during-interruption'){
+      wantPlay=true; lastPlayRequestAt=Date.now();
+      ROZZADebug.yt('DEFER PLAY reason='+reason+' interruptionActive=true');
+      postPlaybackIntentToNative(true, reason);
+      syncBackgroundIntent(true, reason);
+      try{ SessionState.save(true,true); }catch(_){}
+      return true;
+    },
     // Automatic lifecycle recovery is transport-only. It is forbidden from
     // creating PLAY intent. That single distinction lets a human Pause always
     // win over Home/lock recovery, even when delayed callbacks arrive later.
@@ -1790,6 +1801,7 @@ const YT = (() => {
     // this MUST preserve wantPlay and must never publish a user PAUSE intent.
     suspend(reason='system-interruption'){
       if(!wantPlay) return false;
+      clearTimeout(recoveryT);
       ROZZADebug.yt('CMD SUSPEND reason='+reason+' preserveIntent=true');
       if(ready) cmd('pauseVideo',[]);
       return true;
@@ -1799,6 +1811,8 @@ const YT = (() => {
     // is called again. This is the only thing that may set wantPlay=false.
     pause(reason='ROZZA YouTube control'){
       wantPlay=false; lastExplicitPauseAt=Date.now();
+      clearTimeout(recoveryT);
+      if(window.Coordinator?.cancelAutomaticRecovery) window.Coordinator.cancelAutomaticRecovery();
       ROZZADebug.yt('CMD PAUSE reason='+reason+' wantPlay=false');
       postPlaybackIntentToNative(false, reason);
       syncBackgroundIntent(false, 'explicit-pause');
@@ -1836,7 +1850,7 @@ const YT = (() => {
       startupRecoveryCount++;
       lastRecoveryReason='startup';
       ROZZADebug.yt('RECOVERY PLAY attempt='+startupRecoveryCount);
-      recoveryT = setTimeout(()=>{ if(wantPlay && ready) cmd('playVideo',[]); }, 350);
+      recoveryT = setTimeout(()=>{ if(wantPlay && ready && !ROZZAInterruptionActive) cmd('playVideo',[]); }, 350);
     },
     /**
      * The second category: was confirmed playing, then stopped unexpectedly
@@ -1849,7 +1863,7 @@ const YT = (() => {
       ForegroundRecovery.record();
       lastRecoveryReason='foreground';
       ROZZADebug.yt('RECOVERY PLAY attempt='+ForegroundRecovery.count());
-      recoveryT = setTimeout(()=>{ if(wantPlay && ready) cmd('playVideo',[]); }, 400);
+      recoveryT = setTimeout(()=>{ if(wantPlay && ready && !ROZZAInterruptionActive) cmd('playVideo',[]); }, 400);
     },
     markPlaying(){ lastPlayingAt=Date.now(); ForegroundRecovery.onPlayingConfirmed(); }
   };
@@ -1962,6 +1976,10 @@ const Coordinator = {
   // arrives while this is true is ambiguous — possibly about the track being
   // replaced — so it is never treated as an unexpected-foreground pause.
   isSwitchingTrack:false,
+  cancelAutomaticRecovery(){
+    clearTimeout(this._autoT); clearTimeout(this._ytT); clearTimeout(this._ytHardRetryT);
+    this._autoT=null; this._ytT=null; this._ytHardRetryT=null;
+  },
   playIndex(i, autoplay=true, reason='user'){
     const it = Q.items[i]; if(!it) return;
     const autoAdvance = reason==='auto-next' || reason==='smart-queue' || reason==='watchdog';
@@ -1993,15 +2011,15 @@ const Coordinator = {
         // if the embedded document itself is wedged, rebuild it exactly once.
         // No "tap Play again" state is created.
         [120,420,950,1800,3000].forEach(delay=>setTimeout(()=>{
-          if(current===it && current.source==='youtube' && YT.wantPlay && !YT.playing && !current.unavailable) YT.resume('track-start-nudge-'+delay);
+          if(current===it && current.source==='youtube' && YT.wantPlay && !ROZZAInterruptionActive && !YT.playing && !current.unavailable) YT.resume('track-start-nudge-'+delay);
         }, delay));
         this._ytHardRetryT=setTimeout(()=>{
-          if(current===it && current.source==='youtube' && YT.wantPlay && !YT.playing && !current.unavailable){
+          if(current===it && current.source==='youtube' && YT.wantPlay && !ROZZAInterruptionActive && !YT.playing && !current.unavailable){
             YT.rebuildCurrent('automatic-start-self-heal');
           }
         },4300);
         this._ytT = setTimeout(()=>{
-          if(current===it && current.source==='youtube' && YT.wantPlay && !YT.playing && !current.unavailable){
+          if(current===it && current.source==='youtube' && YT.wantPlay && !ROZZAInterruptionActive && !YT.playing && !current.unavailable){
             current.unavailable=true;
             ROZZADebug.yt('START FAILED id='+(current.videoId||current.id)+' — trying next automatically');
             toast('This track could not start — trying the next one.','info','ROZZA');
@@ -2218,7 +2236,8 @@ window.ROZZANativeControls = {
   play(){
     if(!current){ if(Q.items.length) Coordinator.playIndex(0,true,'remote-play'); return {ok:!!Q.items.length}; }
     if(current.source==='youtube'){
-      if(!YT.mounted || YT.videoId!==(current.videoId||current.id)) Coordinator.playIndex(Q.idx,true,'remote-play-rebuild');
+      if(ROZZAInterruptionActive) YT.deferPlay('system-remote-play-during-interruption');
+      else if(!YT.mounted || YT.videoId!==(current.videoId||current.id)) Coordinator.playIndex(Q.idx,true,'remote-play-rebuild');
       else YT.play('system-remote-play');
     }
     else if(!Audio.playing) Audio.play().catch(()=>{});
@@ -2235,8 +2254,18 @@ window.ROZZANativeControls = {
     YT.pause(reason);
     return {ok:true,reason,state:YT.state,wantsPlayback:false};
   },
-  next(){ Coordinator.next(false); return {ok:true,action:'next',index:Q.idx,count:Q.items.length}; },
-  previous(){ const p=Coordinator.previousTrack(); return {ok:p>=0,action:'previous',index:Q.idx,count:Q.items.length}; },
+  next(){
+    const before=Q.idx;
+    if(ROZZAInterruptionActive) return {ok:false,action:'next',reason:'system-interrupted',beforeIndex:before,index:Q.idx,count:Q.items.length};
+    Coordinator.next(false);
+    return {ok:Q.idx!==before,action:'next',beforeIndex:before,index:Q.idx,count:Q.items.length};
+  },
+  previous(){
+    const before=Q.idx;
+    if(ROZZAInterruptionActive) return {ok:false,action:'previous',reason:'system-interrupted',beforeIndex:before,index:Q.idx,count:Q.items.length};
+    const p=Coordinator.previousTrack();
+    return {ok:p>=0&&Q.idx!==before,action:'previous',beforeIndex:before,index:Q.idx,count:Q.items.length};
+  },
   seekTo(t){ if(typeof t==='number'){ Coordinator.seek(t); return {ok:true,action:'seekTo',position:t}; } return {ok:false}; },
   seekBy(delta){
     if(typeof delta!=='number' || !current) return {ok:false};
@@ -2273,7 +2302,7 @@ window.ROZZANativeControls = {
       YT.syncBackgroundIntent(true,remoteReason);
       YT.setBackgroundBridge(true,true,remoteReason);
       [60,240,700].forEach(delay=>setTimeout(()=>{
-        if(!ROZZAAppForeground && current && current.source==='youtube' && YT.wantPlay){
+        if(!ROZZAAppForeground && !ROZZAInterruptionActive && current && current.source==='youtube' && YT.wantPlay){
           YT.pulseBackgroundBridge(remoteReason+'-'+delay);
           if(YT.state!==1) YT.resume(remoteReason+'-'+delay);
         }
@@ -2331,9 +2360,9 @@ window.ROZZANativeControls = {
     ROZZADebug.native('app background');
   },
   backgroundResumeIfWanted(reason='native-background-kick'){
-    if(ROZZAAppForeground || !current || current.source!=='youtube' || !YT.wantPlay){
-      ROZZADebug.yt('BACKGROUND RESUME SKIP reason='+reason+' foreground='+ROZZAAppForeground+' wantPlay='+YT.wantPlay);
-      return { requested:false, foreground:ROZZAAppForeground, wantPlay:YT.wantPlay, state:YT.state };
+    if(ROZZAAppForeground || ROZZAInterruptionActive || !current || current.source!=='youtube' || !YT.wantPlay){
+      ROZZADebug.yt('BACKGROUND RESUME SKIP reason='+reason+' foreground='+ROZZAAppForeground+' interrupted='+ROZZAInterruptionActive+' wantPlay='+YT.wantPlay);
+      return { requested:false, foreground:ROZZAAppForeground, interrupted:ROZZAInterruptionActive, wantPlay:YT.wantPlay, state:YT.state };
     }
     YT.syncBackgroundIntent(true, reason);
     YT.setBackgroundBridge(true, true, reason);

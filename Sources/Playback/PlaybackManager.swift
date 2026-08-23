@@ -81,17 +81,6 @@ final class PlaybackManager: ObservableObject {
             Task { @MainActor in guard let self, self.isPlaying else { return }; self.elapsed += 1; self.updateNowPlaying() }
         }
     }
-    private func configureRemoteCommands() {
-        let center = MPRemoteCommandCenter.shared()
-        center.playCommand.addTarget { [weak self] _ in Task { await self?.toggle() }; return .success }
-        center.pauseCommand.addTarget { [weak self] _ in Task { await self?.toggle() }; return .success }
-        center.nextTrackCommand.addTarget { [weak self] _ in Task { await self?.next() }; return .success }
-        center.previousTrackCommand.addTarget { [weak self] _ in Task { await self?.previous() }; return .success }
-        center.changePlaybackPositionCommand.addTarget { [weak self] event in
-            guard let position = event as? MPChangePlaybackPositionCommandEvent else { return .commandFailed }
-            Task { await self?.seek(to: position.positionTime) }; return .success
-        }
-    }
     private func updateNowPlaying() {
         guard let track = currentTrack, track.capabilities.supportsLockScreen else { return }
         MPNowPlayingInfoCenter.default().nowPlayingInfo = [MPMediaItemPropertyTitle: track.title, MPMediaItemPropertyArtist: track.artist, MPMediaItemPropertyPlaybackDuration: duration, MPNowPlayingInfoPropertyElapsedPlaybackTime: elapsed, MPNowPlayingInfoPropertyPlaybackRate: isPlaying ? 1 : 0]
