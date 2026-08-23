@@ -135,10 +135,15 @@ check "clearInterruptionFlag JS bridge present" grep -q "clearInterruptionFlag" 
 # the two negative checks for Swift call-site syntax that was never
 # compiled as contiguous string data in the first place. All of this is
 # already covered reliably by qa-source.py's source-level greps.
+#
+# The main-player intent log line was also dropped from here: since the
+# per-call-site print() was consolidated into registerExplicitPlaybackIntent(),
+# the only distinguishing literal left at the main-player call site is
+# "main-player-" (12 bytes) — short-literal SSO risk like the others above.
+# Covered by qa-source.py instead.
 strings "$APP_PATH/ROZZA" > "$WORK_DIR/rozza-binary-strings.txt" || true
 check "compiled binary contains background-capture log line" grep -q "Background capture wantsPlayback=" "$WORK_DIR/rozza-binary-strings.txt"
 check "compiled binary contains native pause-fence reason string" grep -q "native-human-pause-fence" "$WORK_DIR/rozza-binary-strings.txt"
-check "compiled binary contains main-player intent log line" grep -q "reason=main-player" "$WORK_DIR/rozza-binary-strings.txt"
 check "compiled binary contains YouTube interruption-ownership log line" grep -q "Ignored AVAudioSession interruption for WebKit-owned YouTube" "$WORK_DIR/rozza-binary-strings.txt"
 
 ditto "$APP_PATH" "$WORK_DIR/Payload/ROZZA.app"

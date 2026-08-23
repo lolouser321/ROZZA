@@ -89,6 +89,7 @@ if "Tap Play once to start this YouTube session." in html: errors.append('manual
 legacy=(root/'Sources/Playback/PlaybackManager.swift').read_text()
 if 'init() { configureRemoteCommands(); restore() }' in legacy: errors.append('legacy PlaybackManager still registers competing remote handlers')
 if 'Ignored AVAudioSession interruption for WebKit-owned YouTube' not in dj: errors.append('YouTube interruption ownership guard missing')
+if 'registerExplicitPlaybackIntent(shouldPlay: true, reason: "main-player-' not in dj: errors.append('main-player explicit play intent registration missing')
 if 'pauseYouTube(reason: "iOS audio interruption began")' in dj: errors.append('OS interruption still mutates explicit YouTube pause intent')
 if 'activePlaybackSource == "youtube"' not in dj or 'clearInterruptionFlag' not in dj: errors.append('YouTube AVAudioSession interruptions are not isolated from WebKit transport')
 proj=(root/'project.yml').read_text()
