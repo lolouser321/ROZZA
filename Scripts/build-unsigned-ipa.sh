@@ -138,7 +138,7 @@ check "clearInterruptionFlag JS bridge present" grep -q "clearInterruptionFlag" 
 strings "$APP_PATH/ROZZA" > "$WORK_DIR/rozza-binary-strings.txt" || true
 check "compiled binary contains background-capture log line" grep -q "Background capture wantsPlayback=" "$WORK_DIR/rozza-binary-strings.txt"
 check "compiled binary contains native pause-fence reason string" grep -q "native-human-pause-fence" "$WORK_DIR/rozza-binary-strings.txt"
-check "compiled binary contains main-player intent log line" grep -q "main-player PLAY reason=" "$WORK_DIR/rozza-binary-strings.txt"
+check "compiled binary contains main-player intent log line" grep -q "reason=main-player" "$WORK_DIR/rozza-binary-strings.txt"
 check "compiled binary contains YouTube interruption-ownership log line" grep -q "Ignored AVAudioSession interruption for WebKit-owned YouTube" "$WORK_DIR/rozza-binary-strings.txt"
 
 ditto "$APP_PATH" "$WORK_DIR/Payload/ROZZA.app"
