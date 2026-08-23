@@ -1971,13 +1971,14 @@ function setActiveSource(next, track){
 
 /* ---------------- COORDINATOR ---------------- */
 const Coordinator = {
-  _autoT:null, _ytT:null, _ytHardRetryT:null, _switchT:null,
+  _autoT:null, _ytT:null, _ytHardRetryT:null, _ytNudgeTs:[], _switchT:null,
   // True for a short window while a new track is loading. A PAUSED that
   // arrives while this is true is ambiguous — possibly about the track being
   // replaced — so it is never treated as an unexpected-foreground pause.
   isSwitchingTrack:false,
   cancelAutomaticRecovery(){
     clearTimeout(this._autoT); clearTimeout(this._ytT); clearTimeout(this._ytHardRetryT);
+    this._ytNudgeTs.forEach(clearTimeout); this._ytNudgeTs=[];
     this._autoT=null; this._ytT=null; this._ytHardRetryT=null;
   },
   playIndex(i, autoplay=true, reason='user'){
@@ -1991,6 +1992,7 @@ const Coordinator = {
     SessionState.onTrack(it); rememberPlayed(it);
     setNeedsTap(false);
     clearTimeout(this._autoT); clearTimeout(this._ytT); clearTimeout(this._ytHardRetryT); clearTimeout(this._switchT);
+    this._ytNudgeTs.forEach(clearTimeout); this._ytNudgeTs=[];
     this.isSwitchingTrack = true;
     this._switchT = setTimeout(()=>{ this.isSwitchingTrack = false; }, 1500);
     if(it.source==='youtube'){
@@ -2010,9 +2012,9 @@ const Coordinator = {
         // Keep startup fully automatic. First try a few transport-only nudges;
         // if the embedded document itself is wedged, rebuild it exactly once.
         // No "tap Play again" state is created.
-        [120,420,950,1800,3000].forEach(delay=>setTimeout(()=>{
+        [120,420,950,1800,3000].forEach(delay=>this._ytNudgeTs.push(setTimeout(()=>{
           if(current===it && current.source==='youtube' && YT.wantPlay && !ROZZAInterruptionActive && !YT.playing && !current.unavailable) YT.resume('track-start-nudge-'+delay);
-        }, delay));
+        }, delay)));
         this._ytHardRetryT=setTimeout(()=>{
           if(current===it && current.source==='youtube' && YT.wantPlay && !ROZZAInterruptionActive && !YT.playing && !current.unavailable){
             YT.rebuildCurrent('automatic-start-self-heal');
@@ -2041,6 +2043,7 @@ const Coordinator = {
     const it=current;
     ROZZADebug.player('RESTORE ENGINE source='+it.source+' autoplay='+!!autoplay+' index='+Q.idx);
     clearTimeout(this._autoT); clearTimeout(this._ytT); clearTimeout(this._ytHardRetryT); clearTimeout(this._switchT);
+    this._ytNudgeTs.forEach(clearTimeout); this._ytNudgeTs=[];
     this.isSwitchingTrack=true;
     this._switchT=setTimeout(()=>{ this.isSwitchingTrack=false; },900);
     if(it.source==='youtube'){
@@ -2221,13 +2224,13 @@ window.Coordinator = Coordinator;
 const RemoteDiagnostics={
   last:null,
   note(action,result){
-    this.last={action:String(action||''),at:Date.now(),index:Q.idx,count:Q.items.length,trackID:trackKey(current),ok:result?.ok!==false};
+    this.last=Object.assign({action:String(action||''),at:Date.now(),index:Q.idx,count:Q.items.length,trackID:trackKey(current),ok:result?.ok!==false},result||{});
     const el=$('#vehicleControlStatus');
     if(el) el.textContent=(this.last.ok?'Received ':'Failed ')+this.last.action+' · '+new Date(this.last.at).toLocaleTimeString([],{hour:'numeric',minute:'2-digit',second:'2-digit'});
   },
   snapshot(){
     const st=PlaybackState.get();
-    return {version:'4.2.3',build:33,nativeShell:IS_NATIVE_SHELL,last:this.last,queueIndex:Q.idx,queueCount:Q.items.length,current:current?{id:trackKey(current),title:current.title,source:current.source}:null,playback:st,youtube:{state:YT.state,wantPlay:YT.wantPlay,playing:YT.playing,mounted:YT.mounted,videoId:YT.videoId},foreground:ROZZAAppForeground};
+    return {version:'4.2.3',build:35,nativeShell:IS_NATIVE_SHELL,last:this.last,queueIndex:Q.idx,queueCount:Q.items.length,current:current?{id:trackKey(current),title:current.title,source:current.source}:null,playback:st,youtube:{state:YT.state,wantPlay:YT.wantPlay,humanPauseActive:!YT.wantPlay,playing:YT.playing,mounted:YT.mounted,videoId:YT.videoId},foreground:ROZZAAppForeground,systemInterrupted:ROZZAInterruptionActive};
   }
 };
 window.ROZZARemoteDiagnostics=RemoteDiagnostics;
@@ -2275,9 +2278,13 @@ window.ROZZANativeControls = {
   },
   _lastRemoteNonce:null,
   _lastRemoteResult:null,
+  _backgroundFallbackTimer:null,
+  _backgroundRecoverySuccessAt:0,
   remote(action,value,nonce){
     action=String(action||'');
     if(nonce!=null && this._lastRemoteNonce===nonce) return this._lastRemoteResult;
+    const beforeIndex=Q.idx;
+    const beforeTrackID=trackKey(current);
     ROZZADebug.native('remote command='+action+(value!=null?' value='+value:''));
     let result={ok:false,action};
     if(action==='play') result=this.play();
@@ -2293,29 +2300,23 @@ window.ROZZANativeControls = {
     else if(action==='dislike'){
       if(current){ Brain?.feedback?.(current,-1); Coordinator.next(false); result={ok:true,action}; }
     }
-    const wantsRun = action==='play'||action==='next'||action==='previous'||action==='dislike';
-    if(wantsRun && current && current.source==='youtube' && !ROZZAAppForeground){
-      // System/vehicle commands arrive while WKWebView is backgrounded. Re-arm
-      // the already-installed iframe bridge for the newly selected track and
-      // pulse the real <video> after the command, not only during Home/lock.
-      const remoteReason='remote-'+action;
-      YT.syncBackgroundIntent(true,remoteReason);
-      YT.setBackgroundBridge(true,true,remoteReason);
-      [60,240,700].forEach(delay=>setTimeout(()=>{
-        if(!ROZZAAppForeground && !ROZZAInterruptionActive && current && current.source==='youtube' && YT.wantPlay){
-          YT.pulseBackgroundBridge(remoteReason+'-'+delay);
-          if(YT.state!==1) YT.resume(remoteReason+'-'+delay);
-        }
-      },delay));
-    }
     postNowPlayingToNative();
     renderDriveMode();
     const st=PlaybackState.get();
     const finalResult=Object.assign({
+      commandID:nonce,
+      beforeIndex,
+      afterIndex:Q.idx,
+      beforeTrackID,
       index:Q.idx,
       count:Q.items.length,
       trackID:trackKey(current),
-      wantsPlayback: current?.source==='youtube' ? !!YT.wantPlay : (st.status==='playing'||st.status==='buffering')
+      wantsPlayback: current?.source==='youtube' ? !!YT.wantPlay : (st.status==='playing'||st.status==='buffering'),
+      humanPauseActive:current?.source==='youtube' ? !YT.wantPlay : st.status==='paused',
+      foreground:ROZZAAppForeground,
+      systemInterrupted:ROZZAInterruptionActive,
+      accepted:result?.ok!==false,
+      rejectionReason:result?.ok===false ? (result.reason||'rejected') : ''
     },result||{});
     RemoteDiagnostics.note(action,finalResult);
     if(nonce!=null){ this._lastRemoteNonce=nonce; this._lastRemoteResult=finalResult; }
@@ -2354,12 +2355,21 @@ window.ROZZANativeControls = {
       // the Home/lock transition. Keep one JS-side bounded fallback in case
       // the native callback lands before the iframe has reported its PAUSE.
       if(shouldResume){
-        setTimeout(()=>window.ROZZANativeControls.backgroundResumeIfWanted('js-background-fallback'), 220);
+        clearTimeout(this._backgroundFallbackTimer);
+        this._backgroundFallbackTimer=setTimeout(()=>{
+          this._backgroundFallbackTimer=null;
+          this.backgroundResumeIfWanted('js-background-fallback');
+        },220);
       }
     }
     ROZZADebug.native('app background');
   },
   backgroundResumeIfWanted(reason='native-background-kick'){
+    const cooldownRemaining=2500-(Date.now()-this._backgroundRecoverySuccessAt);
+    if(cooldownRemaining>0){
+      ROZZADebug.yt('BACKGROUND RESUME SKIP cooldown='+cooldownRemaining+'ms reason='+reason);
+      return {requested:false,reason:'recovery-cooldown',cooldownRemaining};
+    }
     if(ROZZAAppForeground || ROZZAInterruptionActive || !current || current.source!=='youtube' || !YT.wantPlay){
       ROZZADebug.yt('BACKGROUND RESUME SKIP reason='+reason+' foreground='+ROZZAAppForeground+' interrupted='+ROZZAInterruptionActive+' wantPlay='+YT.wantPlay);
       return { requested:false, foreground:ROZZAAppForeground, interrupted:ROZZAInterruptionActive, wantPlay:YT.wantPlay, state:YT.state };
@@ -2378,7 +2388,16 @@ window.ROZZANativeControls = {
     YT.resume(reason);
     return { requested:true, bridgePulse:true, state:YT.state };
   },
+  backgroundRecoveryConfirmed(reason='playing-confirmed'){
+    this._backgroundRecoverySuccessAt=Date.now();
+    clearTimeout(this._backgroundFallbackTimer);
+    this._backgroundFallbackTimer=null;
+    ROZZADebug.yt('BACKGROUND RECOVERY CONFIRMED — retries cancelled reason='+reason);
+    return {ok:true,at:this._backgroundRecoverySuccessAt,reason};
+  },
   foreground(){
+    clearTimeout(this._backgroundFallbackTimer);
+    this._backgroundFallbackTimer=null;
     if(current && current.source==='youtube'){
       YT.setBackgroundBridge(false, false, 'foreground');
       // Preserve the current Play/Pause intent for the next Home/lock event.

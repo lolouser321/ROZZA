@@ -32,7 +32,7 @@ if "window.ROZZANativeControls.remote" not in html: errors.append('unified remot
 if "queueIndex: Math.max(0,Q.idx)" not in html or "queueCount: Q.items.length" not in html: errors.append('native playback queue metadata missing')
 if "continuousPlayback:true" not in html: errors.append('continuous playback default missing')
 if 'data-set="continuousPlayback"' not in html: errors.append('continuous playback setting UI missing')
-if "remoteReason='remote-'" not in html: errors.append('background remote-track pulse missing')
+if "const wantsRun = action==='play'||action==='next'" in html: errors.append('remote track switch still schedules redundant JS Play retries')
 if "DRIVE MODE" not in html or "renderDriveMode" not in html: errors.append('Drive Mode UI missing')
 if 'previousTrack(){' not in html or "Coordinator.previousTrack()" not in html: errors.append('vehicle previous-track semantics missing')
 if 'window.ROZZARemoteDiagnostics=RemoteDiagnostics' not in html: errors.append('vehicle command diagnostics missing')
@@ -49,6 +49,8 @@ if "window.ROZZANativeNetwork=ROZZANativeNetwork" not in html: errors.append('na
 background=(root/'Resources/yt_background_bridge.js').read_text()
 if 'ROZZA_BACKGROUND_PULSE' not in background: errors.append('iframe background pulse receiver missing')
 if 'MAX_RECOVERIES = 8' not in background: errors.append('transition recovery budget not updated')
+if 'const recoveryTimers = new Set()' not in background or 'cancelRecoveryTimers' not in background: errors.append('iframe background retries are not cancellable')
+if "cancelRecoveryTimers('playing-confirmed')" not in background or "cancelRecoveryTimers('explicit-pause-intent')" not in background: errors.append('iframe retry cancellation fences missing')
 web=(root/'Sources/Web/ROZZAWebAppView.swift').read_text()
 if 'name: "networkProxy"' not in web or 'proxyJSONRequest' not in web: errors.append('native URLSession network proxy missing')
 
@@ -95,8 +97,14 @@ if 'likelyWebKitStartupHandoff' not in dj: errors.append('narrow WebKit startup-
 if 'interruptedPlaybackSessionID == activePlaybackSessionID' not in dj: errors.append('interruption resume is not fenced to the same playback session')
 if 'suspendForInterruption' not in dj or 'resumeAfterInterruption' not in dj: errors.append('real YouTube interruption suspend/resume path missing')
 if 'setAllMediaPlaybackSuspended(true)' not in dj or 'setAllMediaPlaybackSuspended(false)' not in dj: errors.append('native WebKit hard suspend/resume fence missing')
+if 'scheduledBackgroundKickWorkItems: [DispatchWorkItem]' not in dj or 'scheduledRemoteRecoveryWorkItems: [DispatchWorkItem]' not in dj: errors.append('native background/remote retries are not cancellable')
+if 'markBackgroundRecoverySucceeded' not in dj or 'backgroundRecoveryCooldown: TimeInterval = 2.5' not in dj: errors.append('background recovery success cancellation/cooldown missing')
+if 'youtubeWantsPlayback || isYouTubePlaying' in dj: errors.append('remote toggle still trusts stale playback observation instead of explicit intent')
+if "action == \"play\" {" not in dj: errors.append('remote recovery is not limited to explicit Play')
+if 'backgroundRecoveryConfirmed' not in html or '_backgroundRecoverySuccessAt' not in html: errors.append('JS background success cancellation/cooldown missing')
+if 'commandID:nonce' not in html or 'beforeIndex' not in html or 'afterIndex:Q.idx' not in html or 'rejectionReason:' not in html: errors.append('remote command diagnostics are incomplete')
 proj=(root/'project.yml').read_text()
-for token in ['MARKETING_VERSION: 4.2.3','CURRENT_PROJECT_VERSION: 34','Resources/yt_background_bridge.js','path: rozza2.html']:
+for token in ['MARKETING_VERSION: 4.2.3','CURRENT_PROJECT_VERSION: 35','Resources/yt_background_bridge.js','path: rozza2.html']:
     if token not in proj: errors.append('project.yml missing: '+token)
 workflow=(root/'.github/workflows/ios-ipa.yml').read_text()
 if 'working-directory: ios' in workflow or 'path: ios/ROZZA-unsigned.ipa' in workflow: errors.append('GitHub workflow still builds obsolete ios subproject')

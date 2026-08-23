@@ -79,9 +79,9 @@ check "CFBundleDisplayName" test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleD
 check "CFBundleIconName" test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIconName' "$APP_PATH/Info.plist")" = "AppIcon"
 check "UIBackgroundModes[0]" test "$(/usr/libexec/PlistBuddy -c 'Print :UIBackgroundModes:0' "$APP_PATH/Info.plist")" = "audio"
 check "CFBundleShortVersionString == 4.2.3" test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP_PATH/Info.plist")" = "4.2.3"
-check "CFBundleVersion == 34" test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP_PATH/Info.plist")" = "34"
+check "CFBundleVersion == 35" test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP_PATH/Info.plist")" = "35"
 
-# Build 34 remote/background stability guard: make sure Xcode packaged the
+# Build 35 remote/background stability guard: make sure Xcode packaged the
 # boot-time engine restore, Drive Mode, HD artwork, hard human-pause fence,
 # plus the real phone/Siri interruption state machine instead of a stale HTML
 # or Swift build.
@@ -96,11 +96,13 @@ check "native network fallback wired" grep -q "window.ROZZANativeNetwork=ROZZANa
 check "persistent YouTube player switch" grep -q "cmd(autoplay ? 'loadVideoById' : 'cueVideoById', \[id\])" "$APP_PATH/rozza2.html"
 check "background pulse event (HTML)" grep -q "ROZZA_BACKGROUND_PULSE" "$APP_PATH/rozza2.html"
 check "background pulse receiver (bridge JS)" grep -q "ROZZA_BACKGROUND_PULSE" "$APP_PATH/yt_background_bridge.js"
+check "background recovery cancellation (bridge JS)" grep -q "BackgroundRecoveryCancelled" "$APP_PATH/yt_background_bridge.js"
 check "mirror pool version 4" grep -q "const MIRROR_POOL_VERSION = 4;" "$APP_PATH/rozza2.html"
 check "current Piped seed present" grep -q "pipedapi.orangenet.cc" "$APP_PATH/rozza2.html"
 check "unified remote command dispatcher" grep -q "window.ROZZANativeControls.remote" "$APP_PATH/rozza2.html"
 check "vehicle previous-track semantics" grep -q "Coordinator.previousTrack()" "$APP_PATH/rozza2.html"
 check "vehicle command diagnostics" grep -q "window.ROZZARemoteDiagnostics=RemoteDiagnostics" "$APP_PATH/rozza2.html"
+check "background success callback" grep -q "backgroundRecoveryConfirmed" "$APP_PATH/rozza2.html"
 check "native Now Playing clear handoff" grep -q "postMessage({ clear:true" "$APP_PATH/rozza2.html"
 check "native queue-index metadata" grep -q "queueIndex: Math.max(0,Q.idx)" "$APP_PATH/rozza2.html"
 check "Drive Mode sheet present" grep -q 'id="driveSheet"' "$APP_PATH/rozza2.html"

@@ -10,6 +10,7 @@
   let intendedVideoId = null;
   let observer = null;
   let recoveryTimes = [];
+  const recoveryTimers = new Set();
   const RECOVERY_WINDOW_MS = 12000;
   const MAX_RECOVERIES = 8;
 
@@ -96,7 +97,7 @@
       currentTime: video?.currentTime || 0
     });
     if (video && video.paused) {
-      setTimeout(() => recover(video, 'first-lifecycle-event'), 0);
+      scheduleRecovery(video, 'first-lifecycle-event', 0);
     }
   }
 
@@ -142,6 +143,20 @@
     }
   }
 
+  function cancelRecoveryTimers(reason) {
+    recoveryTimers.forEach(timer => clearTimeout(timer));
+    recoveryTimers.clear();
+    emit('BackgroundRecoveryCancelled', { reason: reason || 'cancelled' });
+  }
+
+  function scheduleRecovery(video, reason, delay) {
+    const timer = setTimeout(() => {
+      recoveryTimers.delete(timer);
+      recover(video, reason);
+    }, delay);
+    recoveryTimers.add(timer);
+  }
+
   function onVideoPause() {
     const video = currentVideo;
     emit('BackgroundVideoPause', {
@@ -153,12 +168,13 @@
     if (enabled && shouldPlay && video && !video.ended) {
       // A Home/lock transition can produce more than one native pause pulse.
       // These are bounded transition retries, not a permanent background loop.
-      [70, 260, 700].forEach(delay => setTimeout(() => recover(video, 'pause-event-' + delay), delay));
+      [70, 260, 700].forEach(delay => scheduleRecovery(video, 'pause-event-' + delay, delay));
     }
   }
 
   function onVideoPlaying() {
     const video = currentVideo;
+    cancelRecoveryTimers('playing-confirmed');
     emit('BackgroundVideoPlaying', { currentTime: video?.currentTime || 0 });
   }
 
@@ -200,6 +216,7 @@
     shouldPlay = !!nextShouldPlay;
     if (enabled && !wasEnabled) recoveryTimes = [];
     if (!enabled) {
+      cancelRecoveryTimers(reason || 'foreground');
       stopObserver();
       recoveryTimes = [];
       emit('BackgroundBridgeState', { enabled: false, shouldPlay: false, reason: reason || 'foreground' });
@@ -220,7 +237,7 @@
     // event above is enough to recover a lifecycle-induced pause without
     // recreating Pure Tube's 100 ms foreground polling loop.
     if (video && shouldPlay) {
-      setTimeout(() => recover(video, 'background-arm'), 80);
+      scheduleRecovery(video, 'background-arm', 80);
     }
   }
 
@@ -231,6 +248,7 @@
     if (data.videoId) intendedVideoId = String(data.videoId);
     if (data.event === 'ROZZA_BACKGROUND_INTENT') {
       shouldPlay = !!data.shouldPlay;
+      if (!shouldPlay) cancelRecoveryTimers('explicit-pause-intent');
       emit('BackgroundIntent', { shouldPlay, reason: data.reason || 'intent-sync' });
       return;
     }

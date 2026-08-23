@@ -3,10 +3,11 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 const root = new URL("../", import.meta.url);
-const [controller, legacyManager, player] = await Promise.all([
+const [controller, legacyManager, player, backgroundBridge] = await Promise.all([
   readFile(new URL("Sources/Playback/DJPlaybackController.swift", root), "utf8"),
   readFile(new URL("Sources/Playback/PlaybackManager.swift", root), "utf8"),
   readFile(new URL("rozza2.html", root), "utf8"),
+  readFile(new URL("Resources/yt_background_bridge.js", root), "utf8"),
 ]);
 
 test("the bundled player JavaScript parses", () => {
@@ -15,6 +16,10 @@ test("the bundled player JavaScript parses", () => {
     .filter((source) => source.trim());
   assert.ok(inlineScripts.length > 0);
   for (const source of inlineScripts) assert.doesNotThrow(() => new Function(source));
+});
+
+test("the iframe background bridge JavaScript parses", () => {
+  assert.doesNotThrow(() => new Function(backgroundBridge));
 });
 
 test("DJPlaybackController is the only native remote-command owner", () => {
@@ -48,6 +53,10 @@ test("a human pause invalidates every native recovery generation", () => {
   assert.match(player, /Coordinator\.cancelAutomaticRecovery\(\)/);
   assert.match(controller, /suspendAllWebMedia\(reason: reason\)/);
   assert.match(controller, /setAllMediaPlaybackSuspended\(true\)/);
+  assert.match(pauseBranch, /cancelScheduledBackgroundKicks\(reason: "human-pause"\)/);
+  assert.match(pauseBranch, /cancelScheduledRemoteRecovery\(reason: "human-pause"\)/);
+  assert.match(player, /cancelAutomaticRecovery\(\)[\s\S]*?_ytNudgeTs\.forEach\(clearTimeout\)/);
+  assert.match(backgroundBridge, /explicit-pause-intent/);
 });
 
 test("transport and Now Playing observations never rewrite explicit intent", () => {
@@ -90,4 +99,27 @@ test("remote next and previous switch once and rely on playIndex autoplay", () =
   assert.match(player, /if\(ROZZAInterruptionActive\) return \{ok:false,action:'previous'/);
   assert.match(player, /this\.playIndex\(n, true, auto\?'auto-next':'next-button'\)/);
   assert.match(player, /this\.playIndex\(p, true,'remote-previous-track'\)/);
+  assert.doesNotMatch(player, /const wantsRun = action==='play'\|\|action==='next'/);
+  assert.match(controller, /action == "play" \{/);
+  assert.doesNotMatch(controller, /action == "play" \|\| action == "toggle" \|\| action == "next"/);
+});
+
+test("confirmed background playback cancels all bounded retries and starts a cooldown", () => {
+  assert.match(controller, /scheduledBackgroundKickWorkItems: \[DispatchWorkItem\]/);
+  assert.match(controller, /scheduledRemoteRecoveryWorkItems: \[DispatchWorkItem\]/);
+  assert.match(controller, /backgroundRecoveryCooldown: TimeInterval = 2\.5/);
+  assert.match(controller, /markBackgroundRecoverySucceeded[\s\S]*?cancelScheduledBackgroundKicks[\s\S]*?cancelScheduledRemoteRecovery/);
+  assert.match(player, /backgroundRecoveryConfirmed[\s\S]*?_backgroundRecoverySuccessAt=Date\.now\(\)/);
+  assert.match(backgroundBridge, /onVideoPlaying[\s\S]*?cancelRecoveryTimers\('playing-confirmed'\)/);
+});
+
+test("remote toggle resolves only from explicit user intent", () => {
+  assert.match(controller, /let shouldPause = youtubeWantsPlayback/);
+  assert.doesNotMatch(controller, /youtubeWantsPlayback \|\| isYouTubePlaying/);
+});
+
+test("remote diagnostics include command identity, transition and rejection state", () => {
+  for (const field of ["commandID:nonce", "beforeIndex", "afterIndex:Q.idx", "humanPauseActive", "foreground:ROZZAAppForeground", "systemInterrupted", "rejectionReason"]) {
+    assert.ok(player.includes(field), `missing remote diagnostic field ${field}`);
+  }
 });
