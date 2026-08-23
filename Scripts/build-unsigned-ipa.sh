@@ -83,8 +83,7 @@ check "CFBundleVersion == 33" test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundl
 
 # Build 33 remote/background stability guard: make sure Xcode packaged the
 # boot-time engine restore, Drive Mode, HD artwork, hard human-pause fence,
-# and the "WebKit owns YouTube audio -- native ignores AVAudioSession
-# interruptions for YouTube entirely" ownership rule instead of a stale HTML
+# plus the real phone/Siri interruption state machine instead of a stale HTML
 # or Swift build.
 check_cmp "packaged rozza2.html matches source" "$PROJECT_ROOT/rozza2.html" "$APP_PATH/rozza2.html"
 check_cmp "packaged yt_background_bridge.js matches source" "$PROJECT_ROOT/Resources/yt_background_bridge.js" "$APP_PATH/yt_background_bridge.js"
@@ -118,7 +117,6 @@ check "native interruption suspend/resume bridge" grep -q "suspendForInterruptio
 check "automatic player self-heal wired" grep -q "automatic-start-self-heal" "$APP_PATH/rozza2.html"
 check "player rebuild log line present" grep -q "REBUILD PLAYER id=" "$APP_PATH/rozza2.html"
 check_absent "manual second-Play fallback removed" "Tap Play once to start this YouTube session." "$APP_PATH/rozza2.html"
-check "clearInterruptionFlag JS bridge present" grep -q "clearInterruptionFlag" "$APP_PATH/rozza2.html"
 # `strings | grep -q` is unsafe under pipefail: grep -q exits as soon as it
 # finds a match, which can SIGPIPE `strings` mid-write ("failed to flush
 # output") and abort the whole script even though the match was found.
@@ -144,7 +142,8 @@ check "clearInterruptionFlag JS bridge present" grep -q "clearInterruptionFlag" 
 strings "$APP_PATH/ROZZA" > "$WORK_DIR/rozza-binary-strings.txt" || true
 check "compiled binary contains background-capture log line" grep -q "Background capture wantsPlayback=" "$WORK_DIR/rozza-binary-strings.txt"
 check "compiled binary contains native pause-fence reason string" grep -q "native-human-pause-fence" "$WORK_DIR/rozza-binary-strings.txt"
-check "compiled binary contains YouTube interruption-ownership log line" grep -q "Ignored AVAudioSession interruption for WebKit-owned YouTube" "$WORK_DIR/rozza-binary-strings.txt"
+check "compiled binary contains genuine-interruption log line" grep -q "Genuine interruption began" "$WORK_DIR/rozza-binary-strings.txt"
+check_absent "compiled binary does not ignore every YouTube interruption" "Ignored AVAudioSession interruption for WebKit-owned YouTube" "$WORK_DIR/rozza-binary-strings.txt"
 
 ditto "$APP_PATH" "$WORK_DIR/Payload/ROZZA.app"
 ditto -c -k --sequesterRsrc --keepParent "$WORK_DIR/Payload" "$OUTPUT_IPA"
