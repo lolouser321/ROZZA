@@ -46,6 +46,8 @@ test("a human pause invalidates every native recovery generation", () => {
   assert.match(pauseBranch, /remoteCommandGeneration \+= 1/);
   assert.match(player, /wantPlay=false; lastExplicitPauseAt=Date\.now\(\);\s*clearTimeout\(recoveryT\);/);
   assert.match(player, /Coordinator\.cancelAutomaticRecovery\(\)/);
+  assert.match(controller, /suspendAllWebMedia\(reason: reason\)/);
+  assert.match(controller, /setAllMediaPlaybackSuspended\(true\)/);
 });
 
 test("transport and Now Playing observations never rewrite explicit intent", () => {
@@ -68,6 +70,7 @@ test("real interruptions suspend without changing play intent and resume only th
   assert.match(controller, /resumeYouTubeAfterInterruption = youtubeWantsPlayback && !hardUserPauseActive/);
   assert.match(controller, /interruptedPlaybackSessionID == activePlaybackSessionID/);
   assert.match(controller, /shouldResume && resumeYouTubeAfterInterruption && youtubeWantsPlayback && !hardUserPauseActive && sameSession/);
+  assert.match(controller, /setAllMediaPlaybackSuspended\(false\)/);
   assert.match(player, /suspend\(reason='system-interruption'\)[\s\S]*?if\(!wantPlay\) return false;[\s\S]*?cmd\('pauseVideo'/);
   assert.match(player, /deferPlay\(reason='play-during-interruption'\)/);
 });

@@ -329,6 +329,28 @@ final class DJPlaybackController: NSObject, ObservableObject {
         }
     }
 
+    /// Native WebKit media suspension is the immediate transport fence for a
+    /// human Pause or real iOS interruption. It does not alter JS intent, so
+    /// system interruptions can still resume while a user Pause remains hard.
+    private func suspendAllWebMedia(reason: String) {
+        guard let webView = persistentWebView else { return }
+        print("[ROZZA WEB MEDIA] SUSPEND reason=\(reason)")
+        webView.setAllMediaPlaybackSuspended(true) {
+            print("[ROZZA WEB MEDIA] SUSPENDED reason=\(reason)")
+        }
+    }
+
+    private func resumeAllWebMediaIfAllowed(reason: String) {
+        guard youtubeWantsPlayback,
+              !hardUserPauseActive,
+              !genuineInterruptionActive,
+              let webView = persistentWebView else { return }
+        print("[ROZZA WEB MEDIA] UNSUSPEND reason=\(reason)")
+        webView.setAllMediaPlaybackSuspended(false) {
+            print("[ROZZA WEB MEDIA] UNSUSPENDED reason=\(reason)")
+        }
+    }
+
     private func refreshDebugState() {
         let session = AVAudioSession.sharedInstance()
         outputRoute = session.currentRoute.outputs.map { "\($0.portName) (\($0.portType.rawValue))" }.joined(separator: ", ")
@@ -424,6 +446,7 @@ final class DJPlaybackController: NSObject, ObservableObject {
             }
             lastYouTubePlayIntentAt = Date().timeIntervalSince1970
             _ = configureAudioSession()
+            resumeAllWebMediaIfAllowed(reason: reason)
         } else {
             // Human/system Pause is a hard fence: cancel every lifecycle resume
             // generation and interruption resume captured before the button tap.
@@ -436,6 +459,7 @@ final class DJPlaybackController: NSObject, ObservableObject {
             remoteCommandGeneration += 1
             endBackgroundTransitionTask()
             endRemoteCommandTask()
+            suspendAllWebMedia(reason: reason)
             var info = MPNowPlayingInfoCenter.default().nowPlayingInfo ?? [:]
             info[MPNowPlayingInfoPropertyPlaybackRate] = 0.0
             MPNowPlayingInfoCenter.default().nowPlayingInfo = info
@@ -749,6 +773,7 @@ final class DJPlaybackController: NSObject, ObservableObject {
             interruptedPlaybackSessionID = activePlaybackSessionID
             resumeYouTubeAfterBackgroundTransition = false
             backgroundResumeGeneration += 1
+            suspendAllWebMedia(reason: "iOS-audio-interruption")
             print("[ROZZA NATIVE] Genuine interruption began reasonRaw=\(reasonText) appState=\(appState.rawValue)")
             evaluateYouTube("if(window.ROZZANativeControls) window.ROZZANativeControls.interruptionBegan();")
             ROZZAAudioSession.shared.markInterrupted()
@@ -793,6 +818,7 @@ final class DJPlaybackController: NSObject, ObservableObject {
         let sameSession = interruptedPlaybackSessionID != nil && interruptedPlaybackSessionID == activePlaybackSessionID
         if shouldResume && resumeYouTubeAfterInterruption && youtubeWantsPlayback && !hardUserPauseActive && sameSession {
             playbackControlPhase = .resuming
+            resumeAllWebMediaIfAllowed(reason: "iOS-interruption-ended")
             evaluateYouTube("if(window.ROZZANativeControls && window.ROZZANativeControls.resumeAfterInterruption) window.ROZZANativeControls.resumeAfterInterruption();")
         } else if hardUserPauseActive || !youtubeWantsPlayback {
             playbackControlPhase = .userPaused

@@ -79,9 +79,9 @@ check "CFBundleDisplayName" test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleD
 check "CFBundleIconName" test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIconName' "$APP_PATH/Info.plist")" = "AppIcon"
 check "UIBackgroundModes[0]" test "$(/usr/libexec/PlistBuddy -c 'Print :UIBackgroundModes:0' "$APP_PATH/Info.plist")" = "audio"
 check "CFBundleShortVersionString == 4.2.3" test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP_PATH/Info.plist")" = "4.2.3"
-check "CFBundleVersion == 33" test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP_PATH/Info.plist")" = "33"
+check "CFBundleVersion == 34" test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP_PATH/Info.plist")" = "34"
 
-# Build 33 remote/background stability guard: make sure Xcode packaged the
+# Build 34 remote/background stability guard: make sure Xcode packaged the
 # boot-time engine restore, Drive Mode, HD artwork, hard human-pause fence,
 # plus the real phone/Siri interruption state machine instead of a stale HTML
 # or Swift build.

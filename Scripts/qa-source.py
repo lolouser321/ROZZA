@@ -94,8 +94,9 @@ if 'pauseYouTube(reason: "iOS audio interruption began")' in dj: errors.append('
 if 'likelyWebKitStartupHandoff' not in dj: errors.append('narrow WebKit startup-handoff filter missing')
 if 'interruptedPlaybackSessionID == activePlaybackSessionID' not in dj: errors.append('interruption resume is not fenced to the same playback session')
 if 'suspendForInterruption' not in dj or 'resumeAfterInterruption' not in dj: errors.append('real YouTube interruption suspend/resume path missing')
+if 'setAllMediaPlaybackSuspended(true)' not in dj or 'setAllMediaPlaybackSuspended(false)' not in dj: errors.append('native WebKit hard suspend/resume fence missing')
 proj=(root/'project.yml').read_text()
-for token in ['MARKETING_VERSION: 4.2.3','CURRENT_PROJECT_VERSION: 33','Resources/yt_background_bridge.js','path: rozza2.html']:
+for token in ['MARKETING_VERSION: 4.2.3','CURRENT_PROJECT_VERSION: 34','Resources/yt_background_bridge.js','path: rozza2.html']:
     if token not in proj: errors.append('project.yml missing: '+token)
 workflow=(root/'.github/workflows/ios-ipa.yml').read_text()
 if 'working-directory: ios' in workflow or 'path: ios/ROZZA-unsigned.ipa' in workflow: errors.append('GitHub workflow still builds obsolete ios subproject')
