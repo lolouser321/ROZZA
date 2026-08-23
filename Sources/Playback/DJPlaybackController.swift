@@ -827,7 +827,7 @@ final class DJPlaybackController: NSObject, ObservableObject {
                 playbackControlPhase == .resuming
             let youtubeLifecycleDeactivation =
                 isYouTube &&
-                (wasSuspended || reason == .appWasSuspended || reason == .sceneWasBackgrounded)
+                (wasSuspended || reason == .appWasSuspended)
 
             if youtubeStartupHandoff || youtubeLifecycleDeactivation {
                 ignoredStartupInterruptionCount += 1

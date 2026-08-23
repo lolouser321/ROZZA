@@ -95,7 +95,7 @@ if 'registerExplicitPlaybackIntent(shouldPlay: true, reason: "main-player-' not 
 if 'pauseYouTube(reason: "iOS audio interruption began")' in dj: errors.append('OS interruption still mutates explicit YouTube pause intent')
 if 'youtubeStartupHandoff' not in dj or 'playbackControlPhase == .resuming' not in dj: errors.append('state-based WebKit startup-handoff classifier missing')
 if 'sincePlay <' in dj or 'likelyWebKitStartupHandoff' in dj: errors.append('interruption classification still relies on a fragile startup time window')
-if 'AVAudioSessionInterruptionWasSuspendedKey' not in dj or '.sceneWasBackgrounded' not in dj: errors.append('documented lifecycle interruption classification missing')
+if 'AVAudioSessionInterruptionWasSuspendedKey' not in dj or '.appWasSuspended' not in dj: errors.append('documented lifecycle interruption classification missing')
 for marker in ['[ROZZA INTERRUPT] BEGIN','[ROZZA INTERRUPT] IGNORED_YOUTUBE_STARTUP','[ROZZA INTERRUPT] GENUINE_EXTERNAL','[ROZZA INTERRUPT] END','[ROZZA INTERRUPT] RESUME']:
     if marker not in dj: errors.append('interruption diagnostic marker missing: '+marker)
 if 'interruptedPlaybackSessionID == activePlaybackSessionID' not in dj: errors.append('interruption resume is not fenced to the same playback session')
