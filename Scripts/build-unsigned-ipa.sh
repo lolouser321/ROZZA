@@ -78,10 +78,10 @@ check "yt_background_bridge.js present" test -s "$APP_PATH/yt_background_bridge.
 check "CFBundleDisplayName" test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleDisplayName' "$APP_PATH/Info.plist")" = "ROZZA"
 check "CFBundleIconName" test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIconName' "$APP_PATH/Info.plist")" = "AppIcon"
 check "UIBackgroundModes[0]" test "$(/usr/libexec/PlistBuddy -c 'Print :UIBackgroundModes:0' "$APP_PATH/Info.plist")" = "audio"
-check "CFBundleShortVersionString == 4.2.4" test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP_PATH/Info.plist")" = "4.2.4"
-check "CFBundleVersion == 37" test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP_PATH/Info.plist")" = "37"
+check "CFBundleShortVersionString == 4.2.5" test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP_PATH/Info.plist")" = "4.2.5"
+check "CFBundleVersion == 38" test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP_PATH/Info.plist")" = "38"
 
-# Build 37 interruption/background stability guard: make sure Xcode packaged the
+# Build 38 control/background stability guard: make sure Xcode packaged the
 # boot-time engine restore, Drive Mode, HD artwork, hard human-pause fence,
 # plus the real phone/Siri interruption state machine instead of a stale HTML
 # or Swift build.
@@ -100,6 +100,9 @@ check "background recovery cancellation (bridge JS)" grep -q "BackgroundRecovery
 check "mirror pool version 4" grep -q "const MIRROR_POOL_VERSION = 4;" "$APP_PATH/rozza2.html"
 check "current Piped seed present" grep -q "pipedapi.orangenet.cc" "$APP_PATH/rozza2.html"
 check "unified remote command dispatcher" grep -q "window.ROZZANativeControls.remote" "$APP_PATH/rozza2.html"
+check "native WebKit MediaSession forwarding" grep -q "webkit-media-session" "$APP_PATH/rozza2.html"
+check "cross-channel remote dedupe" grep -q "duplicateOf:last.origin" "$APP_PATH/rozza2.html"
+check "intent-based YouTube toggle" grep -q "if(YT.wantPlay) YT.pause('user')" "$APP_PATH/rozza2.html"
 check "vehicle previous-track semantics" grep -q "Coordinator.previousTrack()" "$APP_PATH/rozza2.html"
 check "vehicle command diagnostics" grep -q "window.ROZZARemoteDiagnostics=RemoteDiagnostics" "$APP_PATH/rozza2.html"
 check "background success callback" grep -q "backgroundRecoveryConfirmed" "$APP_PATH/rozza2.html"

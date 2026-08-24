@@ -778,7 +778,7 @@ html,body{background:#050507}
             <div class="set-row"><div><div class="sl">Vehicle controls</div><div class="sd" id="vehicleControlStatus">Ready · waiting for a command</div></div><button class="text-action" id="copyVehicleDiagnosticsBtn">Copy</button></div>
             <div class="set-row"><div><div class="sl">Playback diagnostics</div><div class="sd">Copy a private technical timeline when something fails</div></div><button class="text-action" id="copyDiagnosticsBtn">Copy</button></div>
           </div>
-          <div class="ver">ROZZA 4.2.4 · INTERRUPT STABLE</div>
+          <div class="ver">ROZZA 4.2.5 · CONTROL STABLE</div>
         </section>
       </main>
 
@@ -2067,9 +2067,13 @@ const Coordinator = {
     if(!current){ if(Q.items.length) this.playIndex(0,true,'toggle-empty'); return; }
     if(current.source==='youtube'){
       setNeedsTap(false);
-      if(YT.playing) YT.pause('user');
-      else if(!YT.mounted || YT.videoId!==(current.videoId||current.id)) this.playIndex(Q.idx,true);
-      else YT.play();
+      // Human controls must resolve from explicit intent, never the transient
+      // transport state. During BUFFERING/UNSTARTED, YT.playing is false even
+      // though the user already asked for playback; using it made a Play/Pause
+      // tap send another PLAY instead of PAUSE.
+      if(YT.wantPlay) YT.pause('user');
+      else if(!YT.mounted || YT.videoId!==(current.videoId||current.id)) this.playIndex(Q.idx,true,'user-play-rebuild');
+      else YT.play('user');
     } else {
       if(Audio.playing) Audio.pause();
       else if(!Audio.el.src && current.url) this.playIndex(Q.idx,true);
@@ -2230,7 +2234,7 @@ const RemoteDiagnostics={
   },
   snapshot(){
     const st=PlaybackState.get();
-    return {version:'4.2.4',build:37,nativeShell:IS_NATIVE_SHELL,last:this.last,queueIndex:Q.idx,queueCount:Q.items.length,current:current?{id:trackKey(current),title:current.title,source:current.source}:null,playback:st,youtube:{state:YT.state,wantPlay:YT.wantPlay,humanPauseActive:!YT.wantPlay,playing:YT.playing,mounted:YT.mounted,videoId:YT.videoId},foreground:ROZZAAppForeground,systemInterrupted:ROZZAInterruptionActive};
+    return {version:'4.2.5',build:38,nativeShell:IS_NATIVE_SHELL,last:this.last,queueIndex:Q.idx,queueCount:Q.items.length,current:current?{id:trackKey(current),title:current.title,source:current.source}:null,playback:st,youtube:{state:YT.state,wantPlay:YT.wantPlay,humanPauseActive:!YT.wantPlay,playing:YT.playing,mounted:YT.mounted,videoId:YT.videoId},foreground:ROZZAAppForeground,systemInterrupted:ROZZAInterruptionActive};
   }
 };
 window.ROZZARemoteDiagnostics=RemoteDiagnostics;
@@ -2278,11 +2282,23 @@ window.ROZZANativeControls = {
   },
   _lastRemoteNonce:null,
   _lastRemoteResult:null,
+  _lastSystemCommand:null,
   _backgroundFallbackTimer:null,
   _backgroundRecoverySuccessAt:0,
-  remote(action,value,nonce){
-    action=String(action||'');
+  remote(action,value,nonce,origin='native'){
+    action=String(action||''); origin=String(origin||'native');
     if(nonce!=null && this._lastRemoteNonce===nonce) return this._lastRemoteResult;
+    // iOS may deliver the same physical button press through both
+    // MPRemoteCommandCenter and WebKit MediaSession because WebKit owns the
+    // audible YouTube element. Accept whichever channel arrives first and
+    // acknowledge the other without executing the transport twice.
+    const now=Date.now(), last=this._lastSystemCommand;
+    if(last && last.action===action && last.origin!==origin && now-last.at<450){
+      const deduped=Object.assign({},last.result||{ok:true,action},{ok:true,deduped:true,origin,duplicateOf:last.origin});
+      ROZZADebug.native('remote dedupe action='+action+' origin='+origin+' duplicateOf='+last.origin);
+      if(nonce!=null){this._lastRemoteNonce=nonce;this._lastRemoteResult=deduped;}
+      return deduped;
+    }
     const beforeIndex=Q.idx;
     const beforeTrackID=trackKey(current);
     ROZZADebug.native('remote command='+action+(value!=null?' value='+value:''));
@@ -2318,7 +2334,9 @@ window.ROZZANativeControls = {
       accepted:result?.ok!==false,
       rejectionReason:result?.ok===false ? (result.reason||'rejected') : ''
     },result||{});
+    finalResult.origin=origin;
     RemoteDiagnostics.note(action,finalResult);
+    this._lastSystemCommand={action,origin,at:Date.now(),result:finalResult};
     if(nonce!=null){ this._lastRemoteNonce=nonce; this._lastRemoteResult=finalResult; }
     return finalResult;
   },
@@ -2447,28 +2465,33 @@ document.addEventListener('visibilitychange', () => {
 function setNeedsTap(on){ const b=$('#npPlayBtn'); if(b) b.classList.toggle('needs-tap', !!on); }
 
 function mediaSession(){
-  // The iOS shell owns MPRemoteCommandCenter + MPNowPlayingInfoCenter. Do not
-  // register a second Web MediaSession command path in WKWebView or a single
-  // car-button press can be handled twice. Browser builds still use it.
-  if(IS_NATIVE_SHELL || !('mediaSession' in navigator) || !current) return;
+  if(!('mediaSession' in navigator) || !current) return;
   try{
-    navigator.mediaSession.metadata = new MediaMetadata({
-      title: current.title || 'ROZZA', artist: current.artist || 'ROZZA', album: 'ROZZA',
-      artwork: [{ src: bestArtworkURL(current), sizes:'1280x720', type:'image/jpeg' }]
-    });
-    const M = navigator.mediaSession;
-    // PLAY must explicitly play and PAUSE must explicitly pause — never
-    // toggle. A stale-state toggle here would issue the exact opposite of
-    // what was requested. window.ROZZANativeControls.play()/.pause() are
-    // the same explicit methods the native Lock Screen commands call.
-    M.setActionHandler('play', () => window.ROZZANativeControls.remote('play'));
-    M.setActionHandler('pause', () => window.ROZZANativeControls.remote('pause'));
-    M.setActionHandler('nexttrack', () => window.ROZZANativeControls.remote('next'));
-    M.setActionHandler('previoustrack', () => window.ROZZANativeControls.remote('previous'));
-    M.setActionHandler('seekto', d => { if(d.seekTime!=null) window.ROZZANativeControls.remote('seekTo',d.seekTime); });
-    try{ M.setActionHandler('seekforward', d => window.ROZZANativeControls.remote('seekBy',d.seekOffset||15)); }catch(_){ }
-    try{ M.setActionHandler('seekbackward', d => window.ROZZANativeControls.remote('seekBy',-(d.seekOffset||15))); }catch(_){ }
-  }catch(e){}
+    const M=navigator.mediaSession;
+    // WKWebView owns the audible YouTube media element, so iOS can route a
+    // Control Center/AirPods/car command to WebKit MediaSession even while the
+    // native shell also owns MPRemoteCommandCenter. Register handlers in the
+    // native shell too, but send them into the exact same explicit-intent
+    // command path. ROZZANativeControls.remote() dedupes cross-channel delivery.
+    const origin=IS_NATIVE_SHELL?'webkit-media-session':'browser-media-session';
+    M.setActionHandler('play', () => window.ROZZANativeControls.remote('play',null,null,origin));
+    M.setActionHandler('pause', () => window.ROZZANativeControls.remote('pause',null,null,origin));
+    M.setActionHandler('nexttrack', () => window.ROZZANativeControls.remote('next',null,null,origin));
+    M.setActionHandler('previoustrack', () => window.ROZZANativeControls.remote('previous',null,null,origin));
+    M.setActionHandler('seekto', d => { if(d.seekTime!=null) window.ROZZANativeControls.remote('seekTo',d.seekTime,null,origin); });
+    // Do not advertise +/-15 second commands in the native shell. This keeps
+    // system/vehicle surfaces focused on real Previous/Next Track controls.
+    try{ M.setActionHandler('seekforward', IS_NATIVE_SHELL ? null : (d => window.ROZZANativeControls.remote('seekBy',d.seekOffset||15,null,origin))); }catch(_){ }
+    try{ M.setActionHandler('seekbackward', IS_NATIVE_SHELL ? null : (d => window.ROZZANativeControls.remote('seekBy',-(d.seekOffset||15),null,origin))); }catch(_){ }
+    // Native MPNowPlayingInfoCenter owns displayed metadata inside the iOS app;
+    // browser builds still need Web MediaSession metadata.
+    if(!IS_NATIVE_SHELL){
+      navigator.mediaSession.metadata = new MediaMetadata({
+        title: current.title || 'ROZZA', artist: current.artist || 'ROZZA', album: 'ROZZA',
+        artwork: [{ src: bestArtworkURL(current), sizes:'1280x720', type:'image/jpeg' }]
+      });
+    }
+  }catch(e){ ROZZADebug.native('mediaSession handler error='+String(e?.message||e)); }
 }
 
 /* ---------------- SETTINGS / HISTORY / LIBRARY ---------------- */
@@ -2912,7 +2935,7 @@ const UI = {
     $('#mbPlay').innerHTML=playing?pauseIcon:playIcon;
     const np=$('#npPlayBtn'); if(np) np.innerHTML=playing?pauseIcon:playIcon;
     const hp=$('#homePlay'); if(hp) hp.innerHTML=playing?pauseIcon:playIcon;
-    if(!IS_NATIVE_SHELL && 'mediaSession' in navigator){ try{ navigator.mediaSession.playbackState=playing?'playing':'paused'; }catch(e){} }
+    if('mediaSession' in navigator){ try{ navigator.mediaSession.playbackState=playing?'playing':'paused'; }catch(e){} }
     postNowPlayingToNative();
     SessionState.save(false);
     buildTicker(); renderDriveMode();
@@ -3406,7 +3429,7 @@ function wire(){
   $('#clrMirrors').onclick=()=>{ store.del('mirrors'); loadPool(); warmup(); toast('Mirror cache reset','ok','DATA'); };
   $('#queueClear').onclick=()=>{ clearQueue(); toast('Queue cleared','ok','QUEUE'); };
   const copyVehicleDiag=$('#copyVehicleDiagnosticsBtn'); if(copyVehicleDiag) copyVehicleDiag.onclick=async()=>{ const payload=JSON.stringify(RemoteDiagnostics.snapshot(),null,2); try{await navigator.clipboard.writeText(payload);toast('Vehicle diagnostics copied','ok','DRIVE REMOTE');}catch(e){toast('Could not access clipboard','warn','DRIVE REMOTE');} };
-  const copyDiag=$('#copyDiagnosticsBtn'); if(copyDiag) copyDiag.onclick=async()=>{ const payload='ROZZA 4.2.4 INTERRUPT STABLE\n'+JSON.stringify(ROZZADebug.getState(),null,2)+'\n\n'+ROZZADebug.getLog(); try{await navigator.clipboard.writeText(payload);toast('Diagnostics copied','ok','SUPPORT');}catch(e){toast('Could not access clipboard','warn','SUPPORT');} };
+  const copyDiag=$('#copyDiagnosticsBtn'); if(copyDiag) copyDiag.onclick=async()=>{ const payload='ROZZA 4.2.5 CONTROL STABLE\n'+JSON.stringify(ROZZADebug.getState(),null,2)+'\n\n'+ROZZADebug.getLog(); try{await navigator.clipboard.writeText(payload);toast('Diagnostics copied','ok','SUPPORT');}catch(e){toast('Could not access clipboard','warn','SUPPORT');} };
   const netRetry=$('#networkRetry'); if(netRetry) netRetry.onclick=()=>{ refreshRegistries().then(()=>warmup()); };
   window.addEventListener('offline',()=>{ const b=$('#networkBanner');if(b)b.classList.add('show');setConn('quiet'); });
   window.addEventListener('online',()=>{ const b=$('#networkBanner');if(b)b.classList.remove('show');refreshRegistries().then(()=>warmup());toast('Back online','ok','CONNECTION'); });

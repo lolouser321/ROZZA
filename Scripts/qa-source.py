@@ -19,7 +19,7 @@ if dups: errors.append('duplicate HTML ids: '+', '.join(dups))
 for rid in ['app','tabbar','searchInput','results','minibar','npSheet','queueSheet','eventSheet','driveSheet','drivePrev','drivePlay','driveNext','flowEnergy','likedTracks','vehicleControlStatus','copyVehicleDiagnosticsBtn']:
     if rid not in seen: errors.append('missing required HTML id: '+rid)
 if 'const DEBUG = false;' not in html: errors.append('production HTML DEBUG must be false')
-if 'ROZZA 4.2.4 · INTERRUPT STABLE' not in html: errors.append('wrong visible version label')
+if 'ROZZA 4.2.5 · CONTROL STABLE' not in html: errors.append('wrong visible version label')
 if 'id="ytArtworkCover"' not in html: errors.append('Now Playing artwork cover missing')
 if 'rozza-signature' not in html or '<b>ROZZA</b>' not in html: errors.append('ROZZA artwork signature missing')
 if 'This video can’t be embedded right now.' in html: errors.append('legacy YouTube embed-error copy still visible in Now Playing')
@@ -37,7 +37,10 @@ if "DRIVE MODE" not in html or "renderDriveMode" not in html: errors.append('Dri
 if 'previousTrack(){' not in html or "Coordinator.previousTrack()" not in html: errors.append('vehicle previous-track semantics missing')
 if 'window.ROZZARemoteDiagnostics=RemoteDiagnostics' not in html: errors.append('vehicle command diagnostics missing')
 if "postMessage({ clear:true" not in html: errors.append('native Now Playing clear handoff missing')
-if "if(IS_NATIVE_SHELL || !('mediaSession' in navigator) || !current) return;" not in html: errors.append('native shell still risks duplicate Web MediaSession handlers')
+if "const origin=IS_NATIVE_SHELL?'webkit-media-session':'browser-media-session';" not in html: errors.append('native WebKit MediaSession forwarding missing')
+if "last.origin!==origin && now-last.at<450" not in html: errors.append('cross-channel remote-command dedupe missing')
+if "if(YT.wantPlay) YT.pause('user');" not in html: errors.append('YouTube toggle still resolves from transient transport state')
+if "if(YT.playing) YT.pause('user');" in html: errors.append('YouTube toggle still uses transient YT.playing state')
 
 if 'window.ROZZANativeNetwork=ROZZANativeNetwork' not in html: errors.append('native network fallback missing')
 if 'const MIRROR_POOL_VERSION = 4;' not in html: errors.append('mirror pool migration missing')
@@ -84,6 +87,7 @@ if "YT.resume('track-start-nudge-'+delay)" not in html: errors.append('track-sta
 if 'Metadata is transport observation only' not in dj: errors.append('Now Playing metadata still competes with explicit playback intent')
 if 'background intent observation' not in dj.lower(): errors.append('iframe background intent is not observation-only')
 if 'skipForwardCommand.isEnabled = false' not in dj or 'skipBackwardCommand.isEnabled = false' not in dj: errors.append('system ±15s skip commands must stay disabled so Next/Previous surfaces win')
+if 'center.likeCommand.isEnabled = false' not in dj or 'center.dislikeCommand.isEnabled = false' not in dj: errors.append('vehicle feedback commands must stay disabled so transport controls win')
 if 'UIApplication.shared.beginReceivingRemoteControlEvents()' not in dj: errors.append('system accessory remote event receiver missing')
 if 'try? ROZZAAudioSession.shared.configureAndActivateIfNeeded()' in dj: errors.append('YouTube lifecycle still force-activates native audio session')
 if "rebuildCurrent(reason='player-self-heal')" not in html or "automatic-start-self-heal" not in html: errors.append('automatic player self-heal missing')
@@ -113,7 +117,7 @@ if "action == \"play\" {" not in dj: errors.append('remote recovery is not limit
 if 'backgroundRecoveryConfirmed' not in html or '_backgroundRecoverySuccessAt' not in html: errors.append('JS background success cancellation/cooldown missing')
 if 'commandID:nonce' not in html or 'beforeIndex' not in html or 'afterIndex:Q.idx' not in html or 'rejectionReason:' not in html: errors.append('remote command diagnostics are incomplete')
 proj=(root/'project.yml').read_text()
-for token in ['MARKETING_VERSION: 4.2.4','CURRENT_PROJECT_VERSION: 37','Resources/yt_background_bridge.js','path: rozza2.html']:
+for token in ['MARKETING_VERSION: 4.2.5','CURRENT_PROJECT_VERSION: 38','Resources/yt_background_bridge.js','path: rozza2.html']:
     if token not in proj: errors.append('project.yml missing: '+token)
 workflow=(root/'.github/workflows/ios-ipa.yml').read_text()
 if 'working-directory: ios' in workflow or 'path: ios/ROZZA-unsigned.ipa' in workflow: errors.append('GitHub workflow still builds obsolete ios subproject')

@@ -1093,7 +1093,9 @@ final class DJPlaybackController: NSObject, ObservableObject {
 
     private func configureRemoteCommands() {
         // Make ROZZA an explicit receiver for accessory / vehicle transport
-        // events. MPRemoteCommandCenter remains the single command owner.
+        // events. WebKit MediaSession also forwards commands because WKWebView
+        // owns the audible YouTube element; the JS bridge dedupes the two
+        // delivery channels so a physical button press executes exactly once.
         UIApplication.shared.beginReceivingRemoteControlEvents()
         let center = MPRemoteCommandCenter.shared()
 
@@ -1155,18 +1157,10 @@ final class DJPlaybackController: NSObject, ObservableObject {
             return .success
         }
 
-        // Some vehicle and accessory surfaces expose feedback commands. When
-        // available, Like teaches ROZZA Brain and Dislike advances immediately.
-        center.likeCommand.isEnabled = true
-        center.likeCommand.addTarget { [weak self] _ in
-            Task { @MainActor in self?.dispatchRemoteCommand("like") }
-            return .success
-        }
-
-        center.dislikeCommand.isEnabled = true
-        center.dislikeCommand.addTarget { [weak self] _ in
-            Task { @MainActor in self?.dispatchRemoteCommand("dislike", shouldPlay: true) }
-            return .success
-        }
+        // Keep vehicle/headset transport surfaces focused on the controls the
+        // user actually needs. Feedback commands can crowd out Previous/Next on
+        // some head units and are still available inside the ROZZA UI.
+        center.likeCommand.isEnabled = false
+        center.dislikeCommand.isEnabled = false
     }
 }
