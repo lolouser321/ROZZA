@@ -61,6 +61,15 @@ final class DJPlaybackController: NSObject, ObservableObject {
     private var interruptedPlaybackSessionID: String?
     private var activePlaybackSessionID: String?
     private var ignoredStartupInterruptionCount = 0
+    // Real-device Build 36 diagnostics showed WebKit can emit an AVAudioSession
+    // interruption within ~0.5s of an explicit YouTube Play, even after a very
+    // brief PLAYING -> PAUSED report. Keep monotonic timestamps so that startup
+    // ownership handoff can be classified without mutating user intent or using
+    // an arbitrary "clear interruption later" timer.
+    private var lastExplicitYouTubePlayIntentAt: TimeInterval = 0
+    private var lastYouTubeTransportPlayingAt: TimeInterval = 0
+    private let youtubeStartupInterruptionGrace: TimeInterval = 1.5
+    private let youtubePostPlayingHandoffGrace: TimeInterval = 0.9
     private var statusTimer: Timer?
     private var observers: [NSObjectProtocol] = []
 
@@ -114,6 +123,7 @@ final class DJPlaybackController: NSObject, ObservableObject {
             } else {
                 _ = configureAudioSession()
                 isYouTubePlaying = true
+                lastYouTubeTransportPlayingAt = ProcessInfo.processInfo.systemUptime
                 if youtubeWantsPlayback && !genuineInterruptionActive { playbackControlPhase = .playing }
                 updateNativePlaybackState(isPlaying: true, payload: payload)
                 markBackgroundRecoverySucceeded(reason: "video-play")
@@ -151,6 +161,7 @@ final class DJPlaybackController: NSObject, ObservableObject {
                 enforcePausedTransportAfterHumanPause(reason: "stale-background-playing")
             } else {
                 isYouTubePlaying = true
+                lastYouTubeTransportPlayingAt = ProcessInfo.processInfo.systemUptime
                 if youtubeWantsPlayback && !genuineInterruptionActive { playbackControlPhase = .playing }
                 updateNativePlaybackState(isPlaying: true, payload: payload)
                 markBackgroundRecoverySucceeded(reason: "background-video-playing")
@@ -172,6 +183,7 @@ final class DJPlaybackController: NSObject, ObservableObject {
                 } else {
                     _ = configureAudioSession()
                     isYouTubePlaying = true
+                    lastYouTubeTransportPlayingAt = ProcessInfo.processInfo.systemUptime
                     playbackControlPhase = .playing
                     updateNativePlaybackState(isPlaying: true, payload: payload)
                     markBackgroundRecoverySucceeded(reason: "background-pulse-playing")
@@ -474,6 +486,7 @@ final class DJPlaybackController: NSObject, ObservableObject {
         youtubeWantsPlayback = shouldPlay
         if shouldPlay {
             hardUserPauseActive = false
+            lastExplicitYouTubePlayIntentAt = ProcessInfo.processInfo.systemUptime
             // Explicit Play means the transport is trying to start. Only a
             // confirmed VideoPlay/BackgroundVideoPlaying observation promotes
             // the state to PLAYING. This distinction is what lets the native
@@ -819,21 +832,50 @@ final class DJPlaybackController: NSObject, ObservableObject {
             // the transport state and documented reason/suspension metadata,
             // never an elapsed-time guess.
             let isYouTube = activePlaybackSource == "youtube"
+            let nowUptime = ProcessInfo.processInfo.systemUptime
+            let explicitPlayAge = lastExplicitYouTubePlayIntentAt > 0
+                ? nowUptime - lastExplicitYouTubePlayIntentAt
+                : .greatestFiniteMagnitude
+            let transportPlayingAge = lastYouTubeTransportPlayingAt > 0
+                ? nowUptime - lastYouTubeTransportPlayingAt
+                : .greatestFiniteMagnitude
+
+            // Real iPhones can report WebKit's audio ownership handoff as an
+            // AVAudioSession interruption immediately after Play. The transport
+            // can even flash PLAYING -> PAUSED before this notification arrives,
+            // which means `playbackControlPhase == .resuming` alone is too weak.
+            // Classify only the narrow startup/just-started window while the app
+            // is foregrounded and user intent is still PLAY. A phone/Siri
+            // interruption after stable playback falls outside this window and
+            // continues through the genuine-interruption path below.
             let youtubeStartupHandoff =
                 isYouTube &&
+                foreground &&
                 youtubeWantsPlayback &&
                 !hardUserPauseActive &&
-                !isYouTubePlaying &&
-                playbackControlPhase == .resuming
+                !wasSuspended &&
+                reason != .appWasSuspended &&
+                (playbackControlPhase == .resuming ||
+                 explicitPlayAge <= youtubeStartupInterruptionGrace ||
+                 transportPlayingAge <= youtubePostPlayingHandoffGrace)
+
             let youtubeLifecycleDeactivation =
                 isYouTube &&
                 (wasSuspended || reason == .appWasSuspended)
 
             if youtubeStartupHandoff || youtubeLifecycleDeactivation {
                 ignoredStartupInterruptionCount += 1
-                ROZZAAudioSession.shared.markInterrupted()
+                genuineInterruptionActive = false
                 let classification = youtubeStartupHandoff ? "webkit-startup-handoff" : "lifecycle-deactivation"
-                print("[ROZZA INTERRUPT] IGNORED_YOUTUBE_STARTUP count=\(ignoredStartupInterruptionCount) classification=\(classification) \(context)")
+                print("[ROZZA INTERRUPT] IGNORED_YOUTUBE_STARTUP count=\(ignoredStartupInterruptionCount) classification=\(classification) explicitPlayAge=\(String(format: "%.3f", explicitPlayAge)) transportPlayingAge=\(String(format: "%.3f", transportPlayingAge)) \(context)")
+                // Never suspend WebKit and never create JS interruption state for
+                // this ownership handoff. If an older callback set the flag,
+                // clear it idempotently so background recovery cannot be blocked.
+                evaluateYouTube("if(window.ROZZANativeControls && window.ROZZANativeControls.clearInterruptionFlag) window.ROZZANativeControls.clearInterruptionFlag('ignored-youtube-startup');")
+                if youtubeWantsPlayback && !hardUserPauseActive {
+                    playbackControlPhase = .resuming
+                    resumeAllWebMediaIfAllowed(reason: "ignored-youtube-startup")
+                }
                 return
             }
 
@@ -883,6 +925,7 @@ final class DJPlaybackController: NSObject, ObservableObject {
         // classified as a genuine interruption.
         guard genuineInterruptionActive else {
             print("[ROZZA INTERRUPT] END ignored=no-genuine-interruption \(context)")
+            evaluateYouTube("if(window.ROZZANativeControls && window.ROZZANativeControls.clearInterruptionFlag) window.ROZZANativeControls.clearInterruptionFlag('non-genuine-interruption-ended');")
             return
         }
         genuineInterruptionActive = false

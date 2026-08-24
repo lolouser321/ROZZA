@@ -19,7 +19,7 @@ if dups: errors.append('duplicate HTML ids: '+', '.join(dups))
 for rid in ['app','tabbar','searchInput','results','minibar','npSheet','queueSheet','eventSheet','driveSheet','drivePrev','drivePlay','driveNext','flowEnergy','likedTracks','vehicleControlStatus','copyVehicleDiagnosticsBtn']:
     if rid not in seen: errors.append('missing required HTML id: '+rid)
 if 'const DEBUG = false;' not in html: errors.append('production HTML DEBUG must be false')
-if 'ROZZA 4.2.3 · REMOTE PAUSE STABLE' not in html: errors.append('wrong visible version label')
+if 'ROZZA 4.2.4 · INTERRUPT STABLE' not in html: errors.append('wrong visible version label')
 if 'id="ytArtworkCover"' not in html: errors.append('Now Playing artwork cover missing')
 if 'rozza-signature' not in html or '<b>ROZZA</b>' not in html: errors.append('ROZZA artwork signature missing')
 if 'This video can’t be embedded right now.' in html: errors.append('legacy YouTube embed-error copy still visible in Now Playing')
@@ -100,6 +100,11 @@ for marker in ['[ROZZA INTERRUPT] BEGIN','[ROZZA INTERRUPT] IGNORED_YOUTUBE_STAR
     if marker not in dj: errors.append('interruption diagnostic marker missing: '+marker)
 if 'interruptedPlaybackSessionID == activePlaybackSessionID' not in dj: errors.append('interruption resume is not fenced to the same playback session')
 if 'suspendForInterruption' not in dj or 'resumeAfterInterruption' not in dj: errors.append('real YouTube interruption suspend/resume path missing')
+
+if 'youtubeStartupInterruptionGrace: TimeInterval = 1.5' not in dj: errors.append('real-device WebKit startup interruption grace classifier missing')
+if 'youtubePostPlayingHandoffGrace: TimeInterval = 0.9' not in dj: errors.append('post-PLAYING WebKit handoff classifier missing')
+if 'explicitPlayAge <= youtubeStartupInterruptionGrace' not in dj or 'transportPlayingAge <= youtubePostPlayingHandoffGrace' not in dj: errors.append('startup classifier does not use real-device play/transport ages')
+if "clearInterruptionFlag('ignored-youtube-startup')" not in dj: errors.append('ignored WebKit startup interruption does not clear stale JS interruption state')
 if 'setAllMediaPlaybackSuspended(true)' not in dj or 'setAllMediaPlaybackSuspended(false)' not in dj: errors.append('native WebKit hard suspend/resume fence missing')
 if 'scheduledBackgroundKickWorkItems: [DispatchWorkItem]' not in dj or 'scheduledRemoteRecoveryWorkItems: [DispatchWorkItem]' not in dj: errors.append('native background/remote retries are not cancellable')
 if 'markBackgroundRecoverySucceeded' not in dj or 'backgroundRecoveryCooldown: TimeInterval = 2.5' not in dj: errors.append('background recovery success cancellation/cooldown missing')
@@ -108,7 +113,7 @@ if "action == \"play\" {" not in dj: errors.append('remote recovery is not limit
 if 'backgroundRecoveryConfirmed' not in html or '_backgroundRecoverySuccessAt' not in html: errors.append('JS background success cancellation/cooldown missing')
 if 'commandID:nonce' not in html or 'beforeIndex' not in html or 'afterIndex:Q.idx' not in html or 'rejectionReason:' not in html: errors.append('remote command diagnostics are incomplete')
 proj=(root/'project.yml').read_text()
-for token in ['MARKETING_VERSION: 4.2.3','CURRENT_PROJECT_VERSION: 36','Resources/yt_background_bridge.js','path: rozza2.html']:
+for token in ['MARKETING_VERSION: 4.2.4','CURRENT_PROJECT_VERSION: 37','Resources/yt_background_bridge.js','path: rozza2.html']:
     if token not in proj: errors.append('project.yml missing: '+token)
 workflow=(root/'.github/workflows/ios-ipa.yml').read_text()
 if 'working-directory: ios' in workflow or 'path: ios/ROZZA-unsigned.ipa' in workflow: errors.append('GitHub workflow still builds obsolete ios subproject')
