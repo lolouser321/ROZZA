@@ -31,12 +31,12 @@ test("DJPlaybackController is the only native remote-command owner", () => {
     "togglePlayPauseCommand",
     "nextTrackCommand",
     "previousTrackCommand",
-    "changePlaybackPositionCommand",
   ]) {
     assert.match(controller, new RegExp(`center\\.${command}\\.isEnabled = true`));
   }
   assert.match(controller, /center\.skipForwardCommand\.isEnabled = false/);
   assert.match(controller, /center\.skipBackwardCommand\.isEnabled = false/);
+  assert.match(controller, /center\.changePlaybackPositionCommand\.isEnabled = false/);
 });
 
 test("a human pause invalidates every native recovery generation", () => {

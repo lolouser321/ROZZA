@@ -2,6 +2,48 @@ import SwiftUI
 import UIKit
 import WebKit
 
+
+/// Fallback responder for iOS transport events that are sometimes delivered
+/// to WebKit's responder chain instead of MPRemoteCommandCenter while the
+/// WKWebView owns the audible YouTube media element.
+///
+/// This does NOT create a second player. It only forwards the physical/system
+/// transport event into DJPlaybackController's existing explicit-intent path.
+final class ROZZARemoteWebView: WKWebView {
+    weak var remoteController: DJPlaybackController?
+
+    override var canBecomeFirstResponder: Bool { true }
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        if window != nil {
+            _ = becomeFirstResponder()
+        }
+    }
+
+    override func remoteControlReceived(with event: UIEvent?) {
+        guard let event else {
+            super.remoteControlReceived(with: event)
+            return
+        }
+
+        switch event.subtype {
+        case .remoteControlPlay,
+             .remoteControlPause,
+             .remoteControlStop,
+             .remoteControlTogglePlayPause,
+             .remoteControlNextTrack,
+             .remoteControlPreviousTrack:
+            let subtype = event.subtype
+            Task { @MainActor [weak remoteController] in
+                remoteController?.handleResponderRemoteControlEvent(subtype)
+            }
+        default:
+            super.remoteControlReceived(with: event)
+        }
+    }
+}
+
 struct ROZZAWebAppView: UIViewRepresentable {
     @ObservedObject var dj: DJPlaybackController
     func makeCoordinator() -> Coordinator { Coordinator(dj: dj) }
@@ -51,7 +93,8 @@ struct ROZZAWebAppView: UIViewRepresentable {
         // The JS resource file itself is left in place for reference, per
         // instruction — see Sources/Web/YouTubeMessengerBridge.swift.
 
-        let webView = WKWebView(frame: .zero, configuration: configuration)
+        let webView = ROZZARemoteWebView(frame: .zero, configuration: configuration)
+        webView.remoteController = dj
         webView.navigationDelegate = context.coordinator
         webView.uiDelegate = context.coordinator
         webView.allowsBackForwardNavigationGestures = false

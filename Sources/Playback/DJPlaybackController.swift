@@ -1091,6 +1091,36 @@ final class DJPlaybackController: NSObject, ObservableObject {
         MPNowPlayingInfoCenter.default().nowPlayingInfo = info
     }
 
+
+    /// Fallback for legacy/responder-chain remote events. Some real iPhones
+    /// route Lock Screen/AirPods/car commands to the WKWebView responder while
+    /// WebKit owns YouTube audio, bypassing MPRemoteCommandCenter entirely.
+    /// Feed those events into the exact same explicit-intent command path.
+    func handleResponderRemoteControlEvent(_ subtype: UIEvent.EventSubtype) {
+        let action: String
+        let shouldPlay: Bool?
+
+        switch subtype {
+        case .remoteControlPlay:
+            action = "play"; shouldPlay = true
+        case .remoteControlPause:
+            action = "pause"; shouldPlay = false
+        case .remoteControlStop:
+            action = "stop"; shouldPlay = false
+        case .remoteControlTogglePlayPause:
+            action = "toggle"; shouldPlay = nil
+        case .remoteControlNextTrack:
+            action = "next"; shouldPlay = true
+        case .remoteControlPreviousTrack:
+            action = "previous"; shouldPlay = true
+        default:
+            return
+        }
+
+        print("[ROZZA RESPONDER REMOTE] action=\(action) subtype=\(subtype.rawValue)")
+        dispatchRemoteCommand(action, shouldPlay: shouldPlay)
+    }
+
     private func configureRemoteCommands() {
         // Make ROZZA an explicit receiver for accessory / vehicle transport
         // events. WebKit MediaSession also forwards commands because WKWebView
@@ -1150,12 +1180,9 @@ final class DJPlaybackController: NSObject, ObservableObject {
         center.skipForwardCommand.isEnabled = false
         center.skipBackwardCommand.isEnabled = false
 
-        center.changePlaybackPositionCommand.isEnabled = true
-        center.changePlaybackPositionCommand.addTarget { [weak self] event in
-            guard let event = event as? MPChangePlaybackPositionCommandEvent else { return .commandFailed }
-            Task { @MainActor in self?.dispatchRemoteCommand("seekTo", value: event.positionTime) }
-            return .success
-        }
+        // Keep the native system surface track-oriented. WebKit was causing
+        // Lock Screen to prefer ±10s/seek controls over Previous/Next.
+        center.changePlaybackPositionCommand.isEnabled = false
 
         // Keep vehicle/headset transport surfaces focused on the controls the
         // user actually needs. Feedback commands can crowd out Previous/Next on
