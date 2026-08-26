@@ -14,9 +14,6 @@ struct ROZZAApp: App {
 #endif
             }
             .preferredColorScheme(.dark)
-            .onAppear {
-                try? ROZZAAudioSession.shared.configureAndActivateIfNeeded()
-            }
         }
     }
 }

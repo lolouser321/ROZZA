@@ -19,7 +19,7 @@ if dups: errors.append('duplicate HTML ids: '+', '.join(dups))
 for rid in ['app','tabbar','searchInput','results','minibar','npSheet','queueSheet','eventSheet','driveSheet','drivePrev','drivePlay','driveNext','flowEnergy','likedTracks','vehicleControlStatus','copyVehicleDiagnosticsBtn']:
     if rid not in seen: errors.append('missing required HTML id: '+rid)
 if 'const DEBUG = false;' not in html: errors.append('production HTML DEBUG must be false')
-if 'ROZZA 4.2.5 · CONTROL STABLE' not in html: errors.append('wrong visible version label')
+if 'ROZZA 4.2.6 · AUDIO OWNER STABLE' not in html: errors.append('wrong visible version label')
 if 'id="ytArtworkCover"' not in html: errors.append('Now Playing artwork cover missing')
 if 'rozza-signature' not in html or '<b>ROZZA</b>' not in html: errors.append('ROZZA artwork signature missing')
 if 'This video can’t be embedded right now.' in html: errors.append('legacy YouTube embed-error copy still visible in Now Playing')
@@ -117,7 +117,7 @@ if "action == \"play\" {" not in dj: errors.append('remote recovery is not limit
 if 'backgroundRecoveryConfirmed' not in html or '_backgroundRecoverySuccessAt' not in html: errors.append('JS background success cancellation/cooldown missing')
 if 'commandID:nonce' not in html or 'beforeIndex' not in html or 'afterIndex:Q.idx' not in html or 'rejectionReason:' not in html: errors.append('remote command diagnostics are incomplete')
 proj=(root/'project.yml').read_text()
-for token in ['MARKETING_VERSION: 4.2.5','CURRENT_PROJECT_VERSION: 38','Resources/yt_background_bridge.js','path: rozza2.html']:
+for token in ['MARKETING_VERSION: 4.2.6','CURRENT_PROJECT_VERSION: 39','Resources/yt_background_bridge.js','path: rozza2.html']:
     if token not in proj: errors.append('project.yml missing: '+token)
 workflow=(root/'.github/workflows/ios-ipa.yml').read_text()
 if 'working-directory: ios' in workflow or 'path: ios/ROZZA-unsigned.ipa' in workflow: errors.append('GitHub workflow still builds obsolete ios subproject')
@@ -125,6 +125,7 @@ if './Scripts/build-unsigned-ipa.sh' not in workflow: errors.append('GitHub work
 if (root/'ios').exists(): errors.append('obsolete duplicate ios project still present')
 app=(root/'Sources/ROZZAApp.swift').read_text()
 if '#if DEBUG' not in app or 'DJLauncherButton(controller: dj)' not in app: errors.append('DJ test launcher is not DEBUG-gated')
+if 'configureAndActivateIfNeeded()' in app: errors.append('app launch still steals WebKit audio-session ownership with setActive(true)')
 if errors:
     print('ROZZA PERFORMANCE-AUTOPLAY source QA FAILED:')
     for e in errors: print(' -',e)

@@ -78,10 +78,10 @@ check "yt_background_bridge.js present" test -s "$APP_PATH/yt_background_bridge.
 check "CFBundleDisplayName" test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleDisplayName' "$APP_PATH/Info.plist")" = "ROZZA"
 check "CFBundleIconName" test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIconName' "$APP_PATH/Info.plist")" = "AppIcon"
 check "UIBackgroundModes[0]" test "$(/usr/libexec/PlistBuddy -c 'Print :UIBackgroundModes:0' "$APP_PATH/Info.plist")" = "audio"
-check "CFBundleShortVersionString == 4.2.5" test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP_PATH/Info.plist")" = "4.2.5"
-check "CFBundleVersion == 38" test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP_PATH/Info.plist")" = "38"
+check "CFBundleShortVersionString == 4.2.6" test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP_PATH/Info.plist")" = "4.2.6"
+check "CFBundleVersion == 39" test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP_PATH/Info.plist")" = "39"
 
-# Build 38 control/background stability guard: make sure Xcode packaged the
+# Build 39 audio-owner/control stability guard: make sure Xcode packaged the
 # boot-time engine restore, Drive Mode, HD artwork, hard human-pause fence,
 # plus the real phone/Siri interruption state machine instead of a stale HTML
 # or Swift build.
