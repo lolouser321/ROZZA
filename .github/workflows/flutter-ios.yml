@@ -1,0 +1,60 @@
+name: Build ROZZA Flutter IPA
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "flutter_app/**"
+      - ".github/workflows/flutter-ios.yml"
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: "3.47.1"
+          channel: stable
+          cache: true
+
+      - name: Resolve packages
+        working-directory: flutter_app
+        run: flutter pub get
+
+      - name: Analyze
+        working-directory: flutter_app
+        run: flutter analyze
+
+      - name: Test
+        working-directory: flutter_app
+        run: flutter test
+
+      - name: Build unsigned iOS app
+        working-directory: flutter_app
+        env:
+          ROZZA_API_BASE_URL: ${{ secrets.ROZZA_API_BASE_URL }}
+        run: |
+          args=(--release --no-codesign --build-name=5.0.0 --build-number=41)
+          if [[ -n "$ROZZA_API_BASE_URL" ]]; then
+            args+=(--dart-define="ROZZA_API_BASE_URL=$ROZZA_API_BASE_URL")
+          fi
+          flutter build ios "${args[@]}"
+
+      - name: Package unsigned IPA
+        working-directory: flutter_app
+        run: |
+          mkdir -p build/ipa/Payload
+          cp -R build/ios/iphoneos/Runner.app build/ipa/Payload/ROZZA.app
+          cd build/ipa
+          zip -qry ../ROZZA-Flutter-Unsigned-build41.ipa Payload
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ROZZA-Flutter-Unsigned-build41
+          path: flutter_app/build/ROZZA-Flutter-Unsigned-build41.ipa
+          if-no-files-found: error
+          retention-days: 30
