@@ -6,8 +6,8 @@ options:
 settings:
   base:
     SWIFT_VERSION: 5.10
-    MARKETING_VERSION: 4.2.7
-    CURRENT_PROJECT_VERSION: 40
+    MARKETING_VERSION: 4.2.8
+    CURRENT_PROJECT_VERSION: 41
 targets:
   ROZZA:
     type: application

@@ -2234,7 +2234,7 @@ const RemoteDiagnostics={
   },
   snapshot(){
     const st=PlaybackState.get();
-    return {version:'4.2.7',build:40,nativeShell:IS_NATIVE_SHELL,last:this.last,queueIndex:Q.idx,queueCount:Q.items.length,current:current?{id:trackKey(current),title:current.title,source:current.source}:null,playback:st,youtube:{state:YT.state,wantPlay:YT.wantPlay,humanPauseActive:!YT.wantPlay,playing:YT.playing,mounted:YT.mounted,videoId:YT.videoId},foreground:ROZZAAppForeground,systemInterrupted:ROZZAInterruptionActive};
+    return {version:'4.2.8',build:41,nativeShell:IS_NATIVE_SHELL,last:this.last,queueIndex:Q.idx,queueCount:Q.items.length,current:current?{id:trackKey(current),title:current.title,source:current.source}:null,playback:st,youtube:{state:YT.state,wantPlay:YT.wantPlay,humanPauseActive:!YT.wantPlay,playing:YT.playing,mounted:YT.mounted,videoId:YT.videoId},foreground:ROZZAAppForeground,systemInterrupted:ROZZAInterruptionActive};
   }
 };
 window.ROZZARemoteDiagnostics=RemoteDiagnostics;
@@ -2498,14 +2498,14 @@ function mediaSession(){
     // system/vehicle surfaces focused on real Previous/Next Track controls.
     try{ M.setActionHandler('seekforward', IS_NATIVE_SHELL ? null : (d => window.ROZZANativeControls.remote('seekBy',d.seekOffset||15,null,origin))); }catch(_){ }
     try{ M.setActionHandler('seekbackward', IS_NATIVE_SHELL ? null : (d => window.ROZZANativeControls.remote('seekBy',-(d.seekOffset||15),null,origin))); }catch(_){ }
-    // Native MPNowPlayingInfoCenter owns displayed metadata inside the iOS app;
-    // browser builds still need Web MediaSession metadata.
-    if(!IS_NATIVE_SHELL){
-      navigator.mediaSession.metadata = new MediaMetadata({
-        title: current.title || 'ROZZA', artist: current.artist || 'ROZZA', album: 'ROZZA',
-        artwork: [{ src: bestArtworkURL(current), sizes:'1280x720', type:'image/jpeg' }]
-      });
-    }
+    // Swift remains the authoritative MPNowPlayingInfoCenter owner. Mirror the
+    // same item into WebKit because iOS may bind the audible iframe to Web
+    // MediaSession before Swift reclaims MPRemoteCommandCenter. Without this
+    // synchronized fallback, real devices can omit every transport button.
+    navigator.mediaSession.metadata = new MediaMetadata({
+      title: current.title || 'ROZZA', artist: current.artist || 'ROZZA', album: 'ROZZA',
+      artwork: [{ src: bestArtworkURL(current), sizes:'1280x720', type:'image/jpeg' }]
+    });
   }catch(e){ ROZZADebug.native('mediaSession handler error='+String(e?.message||e)); }
 }
 

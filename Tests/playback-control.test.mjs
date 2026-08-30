@@ -174,3 +174,11 @@ test("native remote logs contain the complete command audit envelope", () => {
     assert.ok(controller.includes(field), `missing native remote diagnostic field ${field}`);
   }
 });
+
+test("native command ownership is reclaimed after WebKit creates MediaSession", () => {
+  assert.match(controller, /claimRemoteCommandOwnership\(reason: "now-playing-item"\)/);
+  assert.match(controller, /claimRemoteCommandOwnership\(reason: "now-playing-item-settled"\)/);
+  assert.match(controller, /\[ROZZA REMOTE OWNER\] CLAIM/);
+  assert.match(controller, /MPNowPlayingInfoPropertyMediaType/);
+  assert.match(player, /navigator\.mediaSession\.metadata = new MediaMetadata/);
+});

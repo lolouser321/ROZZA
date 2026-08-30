@@ -117,7 +117,7 @@ if "action == \"play\" {" not in dj: errors.append('remote recovery is not limit
 if 'backgroundRecoveryConfirmed' not in html or '_backgroundRecoverySuccessAt' not in html: errors.append('JS background success cancellation/cooldown missing')
 if 'commandID:nonce' not in html or 'beforeIndex' not in html or 'afterIndex:Q.idx' not in html or 'rejectionReason:' not in html: errors.append('remote command diagnostics are incomplete')
 proj=(root/'project.yml').read_text()
-for token in ['MARKETING_VERSION: 4.2.7','CURRENT_PROJECT_VERSION: 40','Resources/yt_background_bridge.js','path: rozza2.html']:
+for token in ['MARKETING_VERSION: 4.2.8','CURRENT_PROJECT_VERSION: 41','Resources/yt_background_bridge.js','path: rozza2.html']:
     if token not in proj: errors.append('project.yml missing: '+token)
 workflow=(root/'.github/workflows/ios-ipa.yml').read_text()
 if 'working-directory: ios' in workflow or 'path: ios/ROZZA-unsigned.ipa' in workflow: errors.append('GitHub workflow still builds obsolete ios subproject')
@@ -137,6 +137,10 @@ for field in ['sourceChannel=', 'commandID=', 'queueIndexBefore=', 'queueIndexAf
     if field not in controller: errors.append('native remote diagnostic field missing: '+field)
 if 'center.changePlaybackPositionCommand.isEnabled = false' not in controller: errors.append('native seek command still competes with previous/next')
 if "M.setActionHandler('seekto', IS_NATIVE_SHELL ? null" not in html: errors.append('WebKit seekto still competes with previous/next in native shell')
+if 'claimRemoteCommandOwnership(reason: "now-playing-item")' not in controller or 'now-playing-item-settled' not in controller: errors.append('native remote owner is not reclaimed after WebKit MediaSession registration')
+if '[ROZZA REMOTE OWNER] CLAIM' not in controller: errors.append('remote owner claim diagnostics missing')
+if 'MPNowPlayingInfoPropertyMediaType' not in controller: errors.append('native Now Playing media type missing')
+if "navigator.mediaSession.metadata = new MediaMetadata" not in html: errors.append('WebKit Now Playing fallback metadata missing')
 
 if errors:
     print('ROZZA PERFORMANCE-AUTOPLAY source QA FAILED:')

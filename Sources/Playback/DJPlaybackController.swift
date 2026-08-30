@@ -67,6 +67,7 @@ final class DJPlaybackController: NSObject, ObservableObject {
     private var remoteCommandTaskID: UIBackgroundTaskIdentifier = .invalid
     private var remoteCommandGeneration = 0
     private var remoteCommandSequence = 0
+    private var remoteCommandOwnerClaimSequence = 0
     private var lastAcceptedRemoteCommand: AcceptedRemoteCommand?
     private let crossChannelRemoteDedupeWindow: TimeInterval = 0.55
     private var artworkTask: URLSessionDataTask?
@@ -93,7 +94,7 @@ final class DJPlaybackController: NSObject, ObservableObject {
         super.init()
         configureAudioSession()
         observeAudioEvents()
-        configureRemoteCommands()
+        claimRemoteCommandOwnership(reason: "controller-init")
         applyCrossfader()
         // Debug-deck polling used to cross the WKWebView bridge every 0.6 s
         // even when the DJ diagnostics UI was closed. Core playback state now
@@ -117,6 +118,7 @@ final class DJPlaybackController: NSObject, ObservableObject {
     func attach(webView: WKWebView) {
         guard persistentWebView == nil else { return }
         persistentWebView = webView
+        claimRemoteCommandOwnership(reason: "webview-attached")
         refreshDebugState()
     }
 
@@ -142,6 +144,7 @@ final class DJPlaybackController: NSObject, ObservableObject {
                 lastYouTubeTransportPlayingAt = ProcessInfo.processInfo.systemUptime
                 if youtubeWantsPlayback && !genuineInterruptionActive { playbackControlPhase = .playing }
                 updateNativePlaybackState(isPlaying: true, payload: payload)
+                claimRemoteCommandOwnership(reason: "youtube-video-play")
                 markBackgroundRecoverySucceeded(reason: "video-play")
             }
         case "VideoPause":
@@ -1067,8 +1070,11 @@ final class DJPlaybackController: NSObject, ObservableObject {
             return
         }
 
+        let hadNowPlayingInfo = MPNowPlayingInfoCenter.default().nowPlayingInfo != nil
         var nowPlayingInfo = MPNowPlayingInfoCenter.default().nowPlayingInfo ?? [:]
-        if let trackID = info["trackID"] as? String, trackID != lastNowPlayingTrackID {
+        let incomingTrackID = info["trackID"] as? String
+        let trackChanged = incomingTrackID != nil && incomingTrackID != lastNowPlayingTrackID
+        if let trackID = incomingTrackID, trackChanged {
             // Never leave the previous song's cover art visible while the new
             // artwork is still downloading (or if that download fails).
             artworkTask?.cancel()
@@ -1077,6 +1083,7 @@ final class DJPlaybackController: NSObject, ObservableObject {
             lastNowPlayingTrackID = trackID
             activePlaybackSessionID = trackID
             nowPlayingInfo.removeValue(forKey: MPMediaItemPropertyArtwork)
+            nowPlayingInfo[MPNowPlayingInfoPropertyExternalContentIdentifier] = trackID
         }
         if let title = info["title"] as? String {
             nowPlayingInfo[MPMediaItemPropertyTitle] = title
@@ -1084,6 +1091,8 @@ final class DJPlaybackController: NSObject, ObservableObject {
         if let artist = info["artist"] as? String {
             nowPlayingInfo[MPMediaItemPropertyArtist] = artist
         }
+        nowPlayingInfo[MPMediaItemPropertyAlbumTitle] = "ROZZA"
+        nowPlayingInfo[MPNowPlayingInfoPropertyMediaType] = MPNowPlayingInfoMediaType.audio.rawValue
         if let duration = (info["duration"] as? NSNumber)?.doubleValue, duration > 0 {
             nowPlayingInfo[MPMediaItemPropertyPlaybackDuration] = duration
         } else if let duration = info["duration"] as? Double, duration > 0 {
@@ -1117,6 +1126,19 @@ final class DJPlaybackController: NSObject, ObservableObject {
             }
         }
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nowPlayingInfo
+
+        // WKWebView creates its Media Session after the native controller is
+        // initialized. Reclaim the app-wide command center only after the
+        // current item has become Now Playing, otherwise WebKit can replace the
+        // startup registration and iOS omits Pause/Previous/Next entirely.
+        if trackChanged || !hadNowPlayingInfo {
+            claimRemoteCommandOwnership(reason: "now-playing-item")
+            let sessionID = activePlaybackSessionID
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
+                guard let self, self.activePlaybackSessionID == sessionID else { return }
+                self.claimRemoteCommandOwnership(reason: "now-playing-item-settled")
+            }
+        }
 
         let artworkURLs = (info["artworkCandidates"] as? [String]) ?? ((info["artworkURL"] as? String).map { [$0] } ?? [])
         if !artworkURLs.isEmpty {
@@ -1205,7 +1227,7 @@ final class DJPlaybackController: NSObject, ObservableObject {
         )
     }
 
-    private func configureRemoteCommands() {
+    private func claimRemoteCommandOwnership(reason: String) {
         // Make ROZZA an explicit receiver for accessory / vehicle transport
         // events. WebKit MediaSession also forwards commands because WKWebView
         // owns the audible YouTube element; the JS bridge dedupes the two
@@ -1273,5 +1295,15 @@ final class DJPlaybackController: NSObject, ObservableObject {
         // some head units and are still available inside the ROZZA UI.
         center.likeCommand.isEnabled = false
         center.dislikeCommand.isEnabled = false
+
+        remoteCommandOwnerClaimSequence += 1
+        let claimID = remoteCommandOwnerClaimSequence
+        let queueCount = (MPNowPlayingInfoCenter.default().nowPlayingInfo?[MPNowPlayingInfoPropertyPlaybackQueueCount] as? NSNumber)?.intValue ?? 0
+        let message = "[ROZZA REMOTE OWNER] CLAIM reason=\(reason) claimID=\(claimID) queueCount=\(queueCount) play=\(center.playCommand.isEnabled) pause=\(center.pauseCommand.isEnabled) toggle=\(center.togglePlayPauseCommand.isEnabled) next=\(center.nextTrackCommand.isEnabled) previous=\(center.previousTrackCommand.isEnabled) skipForward=\(center.skipForwardCommand.isEnabled) skipBackward=\(center.skipBackwardCommand.isEnabled) seek=\(center.changePlaybackPositionCommand.isEnabled)"
+        print(message)
+        let escapedMessage = message
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "'", with: "\\'")
+        evaluateYouTube("if(window.ROZZADebug && window.ROZZADebug.native) window.ROZZADebug.native('\(escapedMessage)');")
     }
 }
