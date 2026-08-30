@@ -130,7 +130,11 @@ if 'configureAndActivateIfNeeded()' in app: errors.append('app launch still stea
 web=(root/'Sources/Web/ROZZAWebAppView.swift').read_text()
 controller=(root/'Sources/Playback/DJPlaybackController.swift').read_text()
 if 'final class ROZZARemoteWebView: WKWebView' not in web or 'remoteControlReceived(with event: UIEvent?)' not in web: errors.append('WKWebView responder remote fallback missing')
-if 'handleResponderRemoteControlEvent' not in controller or '[ROZZA RESPONDER REMOTE]' not in controller: errors.append('native responder remote bridge missing')
+if 'handleResponderRemoteControlEvent' not in controller or 'sourceChannel: .responderChain' not in controller: errors.append('native responder remote bridge missing')
+if 'handleWebKitRemoteCommand' not in controller or 'sourceChannel: .webKitMediaSession' not in controller: errors.append('WebKit MediaSession does not enter the native remote-command path')
+if 'last.sourceChannel != sourceChannel' not in controller or 'crossChannelRemoteDedupeWindow' not in controller: errors.append('native cross-channel remote dedupe missing')
+for field in ['sourceChannel=', 'commandID=', 'queueIndexBefore=', 'queueIndexAfter=', 'videoId=', 'wantPlay=', 'humanPauseActive=', 'accepted=', 'rejectionReason=']:
+    if field not in controller: errors.append('native remote diagnostic field missing: '+field)
 if 'center.changePlaybackPositionCommand.isEnabled = false' not in controller: errors.append('native seek command still competes with previous/next')
 if "M.setActionHandler('seekto', IS_NATIVE_SHELL ? null" not in html: errors.append('WebKit seekto still competes with previous/next in native shell')
 

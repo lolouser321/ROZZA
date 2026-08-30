@@ -9,6 +9,7 @@ const [controller, legacyManager, player, backgroundBridge] = await Promise.all(
   readFile(new URL("rozza2.html", root), "utf8"),
   readFile(new URL("Resources/yt_background_bridge.js", root), "utf8"),
 ]);
+const webView = await readFile(new URL("Sources/Web/ROZZAWebAppView.swift", root), "utf8");
 
 test("the bundled player JavaScript parses", () => {
   const inlineScripts = [...player.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/gi)]
@@ -140,5 +141,36 @@ test("remote toggle resolves only from explicit user intent", () => {
 test("remote diagnostics include command identity, transition and rejection state", () => {
   for (const field of ["commandID:nonce", "beforeIndex", "afterIndex:Q.idx", "humanPauseActive", "foreground:ROZZAAppForeground", "systemInterrupted", "rejectionReason"]) {
     assert.ok(player.includes(field), `missing remote diagnostic field ${field}`);
+  }
+});
+
+test("every iOS system command enters the authoritative native intent path", () => {
+  assert.match(webView, /name: "remoteCommand"/);
+  assert.match(webView, /handleWebKitRemoteCommand/);
+  assert.match(player, /messageHandlers\?\.remoteCommand\?\.postMessage/);
+  assert.doesNotMatch(player, /setActionHandler\('pause', \(\) => window\.ROZZANativeControls\.remote/);
+  for (const source of ["mpRemoteCommandCenter", "responderChain", "webKitMediaSession"]) {
+    assert.ok(controller.includes(`sourceChannel: .${source}`), `missing native entry channel ${source}`);
+  }
+});
+
+test("cross-channel duplicate commands are rejected before intent and transport", () => {
+  const dispatch = controller.slice(
+    controller.indexOf("private func dispatchRemoteCommand"),
+    controller.indexOf("private func performRemoteCommand"),
+  );
+  assert.match(dispatch, /last\.sourceChannel != sourceChannel/);
+  assert.match(dispatch, /last\.action == "toggle" && \["play", "pause"\]\.contains\(requestedAction\)/);
+  assert.match(dispatch, /crossChannelRemoteDedupeWindow/);
+  assert.ok(dispatch.indexOf("last.sourceChannel != sourceChannel") < dispatch.indexOf("registerExplicitPlaybackIntent"));
+  assert.match(dispatch, /accepted=false rejectionReason=duplicate-of-/);
+});
+
+test("native remote logs contain the complete command audit envelope", () => {
+  for (const field of [
+    "sourceChannel=", "commandID=", "queueIndexBefore=", "queueIndexAfter=",
+    "videoId=", "wantPlay=", "humanPauseActive=", "accepted=", "rejectionReason=",
+  ]) {
+    assert.ok(controller.includes(field), `missing native remote diagnostic field ${field}`);
   }
 });

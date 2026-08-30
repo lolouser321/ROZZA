@@ -2471,13 +2471,26 @@ function mediaSession(){
     // WKWebView owns the audible YouTube media element, so iOS can route a
     // Control Center/AirPods/car command to WebKit MediaSession even while the
     // native shell also owns MPRemoteCommandCenter. Register handlers in the
-    // native shell too, but send them into the exact same explicit-intent
-    // command path. ROZZANativeControls.remote() dedupes cross-channel delivery.
+    // native shell too, but send them through Swift first so WebKit-only Pause
+    // still sets the authoritative native human-pause fence. Swift dedupes this
+    // fallback against MPRemoteCommandCenter and the responder chain before
+    // any explicit intent or queue mutation occurs.
     const origin=IS_NATIVE_SHELL?'webkit-media-session':'browser-media-session';
-    M.setActionHandler('play', () => window.ROZZANativeControls.remote('play',null,null,origin));
-    M.setActionHandler('pause', () => window.ROZZANativeControls.remote('pause',null,null,origin));
-    M.setActionHandler('nexttrack', () => window.ROZZANativeControls.remote('next',null,null,origin));
-    M.setActionHandler('previoustrack', () => window.ROZZANativeControls.remote('previous',null,null,origin));
+    const systemRemote=(action,value=null)=>{
+      if(IS_NATIVE_SHELL){
+        try{
+          window.webkit?.messageHandlers?.remoteCommand?.postMessage({action,value,sourceChannel:origin,at:Date.now()});
+          return {ok:true,forwarded:true,action,origin};
+        }catch(e){
+          ROZZADebug.native('native remote forward failed action='+action+' error='+String(e?.message||e));
+        }
+      }
+      return window.ROZZANativeControls.remote(action,value,null,origin);
+    };
+    M.setActionHandler('play', () => systemRemote('play'));
+    M.setActionHandler('pause', () => systemRemote('pause'));
+    M.setActionHandler('nexttrack', () => systemRemote('next'));
+    M.setActionHandler('previoustrack', () => systemRemote('previous'));
     // Native shell intentionally does not advertise timeline seeking here.
     // This biases iOS/vehicle surfaces toward Previous / Play-Pause / Next.
     try{ M.setActionHandler('seekto', IS_NATIVE_SHELL ? null : (d => { if(d.seekTime!=null) window.ROZZANativeControls.remote('seekTo',d.seekTime,null,origin); })); }catch(_){ }

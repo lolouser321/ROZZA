@@ -13,6 +13,19 @@ private enum PlaybackControlPhase: String {
     case resuming = "RESUMING"
 }
 
+private enum RemoteCommandSourceChannel: String {
+    case mpRemoteCommandCenter = "mp-remote-command-center"
+    case responderChain = "responder-chain"
+    case webKitMediaSession = "webkit-media-session"
+}
+
+private struct AcceptedRemoteCommand {
+    let action: String
+    let sourceChannel: RemoteCommandSourceChannel
+    let receivedAt: TimeInterval
+    let commandID: Int
+}
+
 @MainActor
 final class DJPlaybackController: NSObject, ObservableObject {
     @Published var isPresented = false
@@ -53,6 +66,9 @@ final class DJPlaybackController: NSObject, ObservableObject {
     private var backgroundTaskID: UIBackgroundTaskIdentifier = .invalid
     private var remoteCommandTaskID: UIBackgroundTaskIdentifier = .invalid
     private var remoteCommandGeneration = 0
+    private var remoteCommandSequence = 0
+    private var lastAcceptedRemoteCommand: AcceptedRemoteCommand?
+    private let crossChannelRemoteDedupeWindow: TimeInterval = 0.55
     private var artworkTask: URLSessionDataTask?
     private var lastArtworkURL: String?
     private var lastNowPlayingTrackID: String?
@@ -211,6 +227,27 @@ final class DJPlaybackController: NSObject, ObservableObject {
         } else {
             registerExplicitPlaybackIntent(shouldPlay: false, reason: "main-player-\(reason)")
         }
+    }
+
+    /// WebKit MediaSession is a fallback receiver only. It must never operate
+    /// the JavaScript player directly in the native shell, because doing so
+    /// bypasses the authoritative native human-pause latch and generations.
+    func handleWebKitRemoteCommand(_ payload: [String: Any]) {
+        guard let action = payload["action"] as? String,
+              ["play", "pause", "stop", "toggle", "next", "previous"].contains(action) else { return }
+        let value = (payload["value"] as? NSNumber)?.doubleValue
+        let shouldPlay: Bool?
+        switch action {
+        case "play", "next", "previous": shouldPlay = true
+        case "pause", "stop": shouldPlay = false
+        default: shouldPlay = nil
+        }
+        dispatchRemoteCommand(
+            action,
+            value: value,
+            shouldPlay: shouldPlay,
+            sourceChannel: .webKitMediaSession
+        )
     }
 
     func setYouTubeDeckVolume(_ value: Float) {
@@ -483,6 +520,10 @@ final class DJPlaybackController: NSObject, ObservableObject {
     }
 
     private func registerExplicitPlaybackIntent(shouldPlay: Bool, reason: String) {
+        // Any fresh human intent invalidates delayed work created for the
+        // preceding transport command. Remote commands capture the new value
+        // after this method returns; in-app commands simply invalidate it.
+        remoteCommandGeneration += 1
         youtubeWantsPlayback = shouldPlay
         if shouldPlay {
             hardUserPauseActive = false
@@ -510,7 +551,6 @@ final class DJPlaybackController: NSObject, ObservableObject {
             resumeYouTubeAfterBackgroundTransition = false
             resumeYouTubeAfterInterruption = false
             backgroundResumeGeneration += 1
-            remoteCommandGeneration += 1
             cancelScheduledBackgroundKicks(reason: "human-pause")
             cancelScheduledRemoteRecovery(reason: "human-pause")
             endBackgroundTransitionTask()
@@ -533,7 +573,12 @@ final class DJPlaybackController: NSObject, ObservableObject {
     /// transport request a short native execution window and require a JS-side
     /// acknowledgement. A failed/delayed evaluateJavaScript gets only two
     /// bounded retries; commands are never turned into a permanent polling loop.
-    private func dispatchRemoteCommand(_ action: String, value: Double? = nil, shouldPlay: Bool? = nil) {
+    private func dispatchRemoteCommand(
+        _ action: String,
+        value: Double? = nil,
+        shouldPlay: Bool? = nil,
+        sourceChannel: RemoteCommandSourceChannel
+    ) {
         let requestedAction = action
         var resolvedAction = action
         var resolvedShouldPlay = shouldPlay
@@ -544,29 +589,61 @@ final class DJPlaybackController: NSObject, ObservableObject {
             resolvedAction = shouldPause ? "pause" : "play"
             resolvedShouldPlay = !shouldPause
         }
+        remoteCommandSequence += 1
+        let commandID = remoteCommandSequence
+        let receivedAt = ProcessInfo.processInfo.systemUptime
+        let nowPlaying = MPNowPlayingInfoCenter.default().nowPlayingInfo ?? [:]
+        let beforeIndex = (nowPlaying[MPNowPlayingInfoPropertyPlaybackQueueIndex] as? NSNumber)?.intValue ?? -1
+        let beforeVideoID = activePlaybackSessionID ?? "none"
+        let foreground = UIApplication.shared.applicationState == .active
+
+        // iOS may deliver one physical press through MPRemoteCommandCenter and
+        // either the responder chain or WebKit MediaSession. Dedupe here,
+        // before explicit intent or queue mutation, so every fallback still
+        // enters one authoritative native path without executing twice.
+        let togglePair = lastAcceptedRemoteCommand.map { last in
+            (last.action == "toggle" && ["play", "pause"].contains(requestedAction)) ||
+            (requestedAction == "toggle" && ["play", "pause"].contains(last.action))
+        } ?? false
+        if let last = lastAcceptedRemoteCommand,
+           (last.action == requestedAction || togglePair),
+           last.sourceChannel != sourceChannel,
+           receivedAt - last.receivedAt < crossChannelRemoteDedupeWindow {
+            print("[ROZZA REMOTE] \(requestedAction.uppercased()) sourceChannel=\(sourceChannel.rawValue) commandID=\(commandID) queueIndexBefore=\(beforeIndex) queueIndexAfter=\(beforeIndex) videoId=\(beforeVideoID) wantPlay=\(youtubeWantsPlayback) humanPauseActive=\(hardUserPauseActive) accepted=false rejectionReason=duplicate-of-\(last.sourceChannel.rawValue)-command-\(last.commandID)")
+            return
+        }
+        lastAcceptedRemoteCommand = AcceptedRemoteCommand(
+            action: requestedAction,
+            sourceChannel: sourceChannel,
+            receivedAt: receivedAt,
+            commandID: commandID
+        )
+
         // Keep the process declared as a playback app for Lock Screen / vehicle
         // routing, but never force native AVAudioSession activation for YouTube.
         _ = configureAudioSession()
         if let resolvedShouldPlay {
-            registerExplicitPlaybackIntent(shouldPlay: resolvedShouldPlay, reason: "remote-\(resolvedAction)")
+            registerExplicitPlaybackIntent(
+                shouldPlay: resolvedShouldPlay,
+                reason: "remote-\(sourceChannel.rawValue)-\(resolvedAction)"
+            )
+        } else {
+            remoteCommandGeneration += 1
         }
-        remoteCommandGeneration += 1
         let generation = remoteCommandGeneration
-        let nowPlaying = MPNowPlayingInfoCenter.default().nowPlayingInfo ?? [:]
-        let beforeIndex = (nowPlaying[MPNowPlayingInfoPropertyPlaybackQueueIndex] as? NSNumber)?.intValue ?? -1
-        let beforeVideoID = activePlaybackSessionID ?? "none"
         let label = requestedAction.uppercased()
-        let foreground = UIApplication.shared.applicationState == .active
-        print("[ROZZA REMOTE] \(label) commandID=\(generation) received beforeIndex=\(beforeIndex) afterIndex=pending videoID=\(beforeVideoID) wantPlay=\(youtubeWantsPlayback) humanPauseActive=\(hardUserPauseActive) foreground=\(foreground) accepted=pending phase=\(playbackControlPhase.rawValue)")
+        print("[ROZZA REMOTE] \(label) sourceChannel=\(sourceChannel.rawValue) commandID=\(commandID) queueIndexBefore=\(beforeIndex) queueIndexAfter=pending videoId=\(beforeVideoID) wantPlay=\(youtubeWantsPlayback) humanPauseActive=\(hardUserPauseActive) accepted=pending rejectionReason=none foreground=\(foreground) phase=\(playbackControlPhase.rawValue)")
         beginRemoteCommandTask()
         performRemoteCommand(
             resolvedAction,
             value: value,
             generation: generation,
+            commandID: commandID,
             attempt: 0,
             beforeIndex: beforeIndex,
             beforeVideoID: beforeVideoID,
-            logAction: requestedAction
+            logAction: requestedAction,
+            sourceChannel: sourceChannel
         )
         if resolvedShouldPlay == false && activePlaybackSource == "youtube" {
             // Guard against a delayed lifecycle recovery that was already queued
@@ -590,10 +667,12 @@ final class DJPlaybackController: NSObject, ObservableObject {
         _ action: String,
         value: Double?,
         generation: Int,
+        commandID: Int,
         attempt: Int,
         beforeIndex: Int,
         beforeVideoID: String,
-        logAction: String
+        logAction: String,
+        sourceChannel: RemoteCommandSourceChannel
     ) {
         guard generation == remoteCommandGeneration else { return }
         let jsValue = value.map { String(format: "%.3f", $0) } ?? "null"
@@ -602,7 +681,7 @@ final class DJPlaybackController: NSObject, ObservableObject {
           if (!window.ROZZANativeControls || typeof window.ROZZANativeControls.remote !== 'function') {
             return { ok:false, reason:'remote-bridge-missing' };
           }
-          const result = window.ROZZANativeControls.remote('\(action)', \(jsValue), \(generation));
+          const result = window.ROZZANativeControls.remote('\(action)', \(jsValue), \(generation), '\(sourceChannel.rawValue)');
           return JSON.stringify(result || { ok:false, reason:'empty-ack' });
         })()
         """) { [weak self] result, error in
@@ -619,7 +698,7 @@ final class DJPlaybackController: NSObject, ObservableObject {
             let afterVideoID = (ack?["trackID"] as? String) ?? self.activePlaybackSessionID ?? "none"
             let rejectionReason = (ack?["reason"] as? String) ?? error?.localizedDescription ?? (ok ? "none" : "unknown")
             let foreground = UIApplication.shared.applicationState == .active
-            print("[ROZZA REMOTE] \(logAction.uppercased()) commandID=\(generation) accepted=\(ok) reason=\(rejectionReason) resolved=\(action) beforeIndex=\(beforeIndex) afterIndex=\(afterIndex) videoID=\(afterVideoID) previousVideoID=\(beforeVideoID) wantPlay=\(self.youtubeWantsPlayback) humanPauseActive=\(self.hardUserPauseActive) foreground=\(foreground) phase=\(self.playbackControlPhase.rawValue) attempt=\(attempt + 1)")
+            print("[ROZZA REMOTE] \(logAction.uppercased()) sourceChannel=\(sourceChannel.rawValue) commandID=\(commandID) queueIndexBefore=\(beforeIndex) queueIndexAfter=\(afterIndex) videoId=\(afterVideoID) previousVideoId=\(beforeVideoID) wantPlay=\(self.youtubeWantsPlayback) humanPauseActive=\(self.hardUserPauseActive) accepted=\(ok) rejectionReason=\(rejectionReason) foreground=\(foreground) phase=\(self.playbackControlPhase.rawValue) attempt=\(attempt + 1)")
             if !ok && attempt < 2 {
                 let delay = attempt == 0 ? 0.12 : 0.38
                 DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
@@ -627,10 +706,12 @@ final class DJPlaybackController: NSObject, ObservableObject {
                         action,
                         value: value,
                         generation: generation,
+                        commandID: commandID,
                         attempt: attempt + 1,
                         beforeIndex: beforeIndex,
                         beforeVideoID: beforeVideoID,
-                        logAction: logAction
+                        logAction: logAction,
+                        sourceChannel: sourceChannel
                     )
                 }
                 return
@@ -1117,8 +1198,11 @@ final class DJPlaybackController: NSObject, ObservableObject {
             return
         }
 
-        print("[ROZZA RESPONDER REMOTE] action=\(action) subtype=\(subtype.rawValue)")
-        dispatchRemoteCommand(action, shouldPlay: shouldPlay)
+        dispatchRemoteCommand(
+            action,
+            shouldPlay: shouldPlay,
+            sourceChannel: .responderChain
+        )
     }
 
     private func configureRemoteCommands() {
@@ -1140,37 +1224,37 @@ final class DJPlaybackController: NSObject, ObservableObject {
 
         center.playCommand.isEnabled = true
         center.playCommand.addTarget { [weak self] _ in
-            Task { @MainActor in self?.dispatchRemoteCommand("play", shouldPlay: true) }
+            Task { @MainActor in self?.dispatchRemoteCommand("play", shouldPlay: true, sourceChannel: .mpRemoteCommandCenter) }
             return .success
         }
 
         center.pauseCommand.isEnabled = true
         center.pauseCommand.addTarget { [weak self] _ in
-            Task { @MainActor in self?.dispatchRemoteCommand("pause", shouldPlay: false) }
+            Task { @MainActor in self?.dispatchRemoteCommand("pause", shouldPlay: false, sourceChannel: .mpRemoteCommandCenter) }
             return .success
         }
 
         center.stopCommand.isEnabled = true
         center.stopCommand.addTarget { [weak self] _ in
-            Task { @MainActor in self?.dispatchRemoteCommand("stop", shouldPlay: false) }
+            Task { @MainActor in self?.dispatchRemoteCommand("stop", shouldPlay: false, sourceChannel: .mpRemoteCommandCenter) }
             return .success
         }
 
         center.togglePlayPauseCommand.isEnabled = true
         center.togglePlayPauseCommand.addTarget { [weak self] _ in
-            Task { @MainActor in self?.dispatchRemoteCommand("toggle") }
+            Task { @MainActor in self?.dispatchRemoteCommand("toggle", sourceChannel: .mpRemoteCommandCenter) }
             return .success
         }
 
         center.nextTrackCommand.isEnabled = true
         center.nextTrackCommand.addTarget { [weak self] _ in
-            Task { @MainActor in self?.dispatchRemoteCommand("next", shouldPlay: true) }
+            Task { @MainActor in self?.dispatchRemoteCommand("next", shouldPlay: true, sourceChannel: .mpRemoteCommandCenter) }
             return .success
         }
 
         center.previousTrackCommand.isEnabled = true
         center.previousTrackCommand.addTarget { [weak self] _ in
-            Task { @MainActor in self?.dispatchRemoteCommand("previous", shouldPlay: true) }
+            Task { @MainActor in self?.dispatchRemoteCommand("previous", shouldPlay: true, sourceChannel: .mpRemoteCommandCenter) }
             return .success
         }
 

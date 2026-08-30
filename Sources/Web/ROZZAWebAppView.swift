@@ -62,6 +62,7 @@ struct ROZZAWebAppView: UIViewRepresentable {
         configuration.userContentController.add(context.coordinator, name: "audioSession")
         configuration.userContentController.add(context.coordinator, name: "nowPlaying")
         configuration.userContentController.add(context.coordinator, name: "playbackIntent")
+        configuration.userContentController.add(context.coordinator, name: "remoteCommand")
         configuration.userContentController.add(context.coordinator, name: "haptics")
         configuration.userContentController.add(context.coordinator, name: "networkProxy")
         // Install only the new background-only bridge. It is injected into
@@ -128,6 +129,9 @@ struct ROZZAWebAppView: UIViewRepresentable {
             } else if message.name == "playbackIntent", message.frameInfo.isMainFrame,
                       let dict = message.body as? [String: Any] {
                 dj?.handlePlaybackIntent(dict)
+            } else if message.name == "remoteCommand", message.frameInfo.isMainFrame,
+                      let dict = message.body as? [String: Any] {
+                dj?.handleWebKitRemoteCommand(dict)
             } else if message.name == "haptics" {
                 fireHaptic(message.body as? String ?? "light")
             } else if message.name == "networkProxy", message.frameInfo.isMainFrame,
